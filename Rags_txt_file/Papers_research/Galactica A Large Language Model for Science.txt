@@ -1,0 +1,2333 @@
+Galactica: A Large Language Model for Science
+Ross Taylor Marcin Kardas Guillem Cucurull
+Thomas Scialom Anthony Hartshorn Elvis Saravia
+Andrew Poulton Viktor Kerkez Robert Stojnic
+Meta AI
+Abstract
+Information overload is a major obstacle to scientiﬁc progress. The explosive growth in
+scientiﬁcliteratureanddatahasmadeiteverhardertodiscoverusefulinsightsinalarge
+mass of information. Today scientiﬁc knowledge is accessed through search engines, but
+they are unable to organize scientiﬁc knowledge alone. In this paper we introduce Galactica:
+a large language model that can store, combine and reason about scientiﬁc knowledge. We
+trainonalargescientiﬁccorpusofpapers,referencematerial,knowledgebasesandmany
+othersources. Weoutperformexistingmodelsonarangeofscientiﬁctasks. Ontechnical
+knowledge probes such as LaTeX equations, Galactica outperforms the latest GPT-3 by
+68.2%versus49.0%. Galacticaalsoperformswellonreasoning,outperformingChinchilla
+onmathematicalMMLUby41.3%to35.7%,andPaLM540BonMATHwithascoreof20.4%
+versus8.8%. Italsosetsanewstate-of-the-artondownstreamtaskssuchasPubMedQAand
+MedMCQA dev of 77.6% and 52.9%. And despite not being trained on a general corpus,
+Galactica outperforms BLOOM and OPT-175B on BIG-bench. We believe these results
+demonstrate the potential for language models as a new interface for science. We open
+source the model for the beneﬁt of the scientiﬁc community1.
+1 Introduction
+Theoriginalpromiseofcomputingwastosolveinformationoverloadinscience. Inhis1945essay"AsWe
+May Think", Vannevar Bush observed how "publication has been extended far beyond our present ability to
+make real use of the record" (Bush, 1945). He proposed computers as a solution to manage the growing
+mountainofinformation. Lickliderexpandedonthiswiththevisionofasymbioticrelationshipbetween
+humans and machines. Computers would take care of routine tasks such as storage and retrieval, "preparing
+the way for insights and decisions in scientiﬁc thinking" (Licklider, 1960).
+Computing has indeed revolutionized how research is conducted, but information overload remains an
+overwhelmingproblem(BornmannandMutz,2014). InMay2022,anaverageof516papersperdaywere
+submitted to arXiv (arXiv, 2022). Beyond papers, scientiﬁc data is also growing much more quickly than our
+abilitytoprocessit(Marx,2013). AsofAugust2022,theNCBIGenBankcontained 1:491012nucleotide
+bases (GenBank, 2022). Given the volume of information, it is impossible for a single person to read all the
+papersinagivenﬁeld;anditislikewisechallengingtoorganizedataontheunderlyingscientiﬁcphenomena.
+Search engines are the current interface for accessing scientiﬁc knowledge following the Licklider paradigm.
+But they do not organize knowledge directly, and instead point to secondary layers such as Wikipedia,
+1galactica.orgarXiv:2211.09085v1  [cs.CL]  16 Nov 2022Galactica: A Large Language Model for Science
+UniProtandPubChemCompoundwhichorganizeliteratureanddata. Theseresourcesrequirecostlyhuman
+contributions, for example writing a review of literature, an encyclopedia article or annotating a protein.
+Given this bottleneck, researchers continue to feel overwhelmed even with powerful search tools to hand.
+Inthispaper,weargueforabetterwaythroughlargelanguagemodels. Unlikesearchengines,language
+models can potentially store, combine and reason about scientiﬁc knowledge. For example, a model trained
+ontheliteraturecouldpotentiallyﬁndhiddenconnectionsbetweendiﬀerentresearch,ﬁndhiddengems,
+and bring these insights to the surface. It could synthesize knowledge by generating secondary content
+automatically: suchasliteraturereviews, encyclopediaarticles,lecturenotesandmore. Andlastly, itcould
+organizediﬀerentmodalities: linkingpaperswithcode,proteinsequenceswithcompounds,theorieswith
+LaTeX,andmore. Ourultimatevisionisasingleneuralnetworkforpoweringscientiﬁctasks. Webelieve
+this is will be the next interface for how humans access scientiﬁc knowledge, and we get started in this paper.
+1.1 Our Contribution
+We introduce a new large language model called Galactica (GAL) for automatically organizing science.
+Galactica is trained on a large and curated corpus of humanity’s scientiﬁc knowledge. This includes over
+48 million papers, textbooks and lecture notes, millions of compounds and proteins, scientiﬁc websites,
+encyclopediasandmore. Unlikeexistinglanguagemodels,whichrelyonanuncuratedcrawl-basedparadigm,
+ourcorpusishigh-qualityandhighlycurated. Weareabletotrainonitformultipleepochswithoutoverﬁtting,
+where upstream and downstream performance improves with use of repeated tokens.
+Datasetdesigniscriticaltoourapproach,whichincludescuratingahigh-qualitydatasetandengineering
+aninterfacetointeractwiththebodyofknowledge. Alldataisprocessedinacommonmarkdownformat
+to blend knowledge between sources. We also include task-speciﬁc datasets in pre-training to facilitate
+composition of this knowledge into new task contexts. For the interface, we use task-speciﬁc tokens to
+support diﬀerent types of knowledge. We process citations with a special token, that allows a researcher to
+predictacitationgivenanyinputcontext. Wewrapstep-by-stepreasoninginaspecialtoken,thatmimicksan
+internal working memory. And lastly, we wrap modalities such as SMILES and protein sequences in special
+tokens, which allows a researcher to interface with them using natural language. With this interface and the
+body of scientiﬁc knowledge in the model, we achieve state-of-the-art results across many scientiﬁc tasks.
+On reasoning tasks, Galactica beats existing language models on benchmarks such as MMLU and
+MATH (Hendrycks et al., 2020, 2021). With our reasoning token approach, we outperform Chinchilla
+on mathematical MMLU with an average score of 41.3% versus 35.7% (Hoﬀmann et al., 2022). Our 120B
+model achieves ascore of 20.4%versus PaLM 540B’s 8.8%on MATH(Chowdhery et al.,2022; Lewkowycz
+et al., 2022). The 30B model also beats PaLM 540B on this task with 18 times less parameters. We believe
+thisaddsanotherreasoningmethodtothedeeplearningtoolkit, alongsidetheexistingchain-of-thought
+approach that has been well explored recently (Wei et al., 2022; Suzgun et al., 2022).
+We also ﬁnd Galactica performs strongly in knowledge-intensive scientiﬁc tasks. We conduct detailed
+knowledge probes of Galactica’s knowledge of equations, chemical reactions and other scientiﬁc knowledge.
+Galactica signiﬁcantly exceeds the performance of general language models such as the latest GPT-3 in these
+tasks;onLaTeXequations,itachievesascoreof68.2%versusthelatestGPT-3’s49.0%(Brownetal.,2020).
+Galactica also performs well in downstream scientiﬁc tasks, and we set a new state-of-the-art on several
+downstream taskssuch asPubMedQA(77.6%) andMedMCQAdev (52.9%)(Jinet al.,2019; Palet al.,2022).
+WealsodemonstratenewcapabilitieswithGalactica’sinterface. First,thecapabilityofpredictingcitations
+improves smoothly with scale, and we also ﬁnd the model becomes better at modelling the underlying
+distribution of citations: the empirical distribution function approaches the reference distribution with scale.
+Importantly,weﬁndthisapproachoutperformstunedsparseanddenseretrievalapproachesforcitation
+prediction. This, along other results, demonstrates the potential for language models to replace the Licklider
+paradigm, document storage and retrieval, with their context-associative power in weight memory.
+In addition, Galactica can perform multi-modal tasks involving SMILES chemical formulas and protein
+sequences. We formulate drug discovery tasks as text prompts and show performance scales in a weakly
+supervised setup. We also demonstrate Galactica learns tasks such as IUPAC name prediction in a self-
+supervised way, and does so by attending to interpretable properties such as functional groups. Lastly,
+Galactica can annotate protein sequences with natural language, including predicting functional keywords.
+Galacticawasusedtohelpwritethispaper,includingrecommendingmissingcitations,topicstodiscussinthe
+introduction and related work, recommending further work, and helping write the abstract and conclusion.
+2Galactica: A Large Language Model for Science
+2 Related Work
+Large Language Models (LLMs) LLMs have achieved breakthrough performance on NLP tasks in recent
+years. Modelsaretrainedwithself-supervisiononlarge,generalcorpusesandtheyperformwellonhundreds
+of tasks (Brown et al., 2020; Rae et al., 2021; Hoﬀmann et al., 2022; Black et al., 2022; Zhang et al., 2022;
+Chowdheryetal.,2022). ThisincludesscientiﬁcknowledgetaskssuchasMMLU(Hendrycksetal.,2020).
+Theyhavethecapabilitytolearnin-contextthroughfew-shotlearning(Brownetal.,2020). Thecapabilityset
+increaseswithscale,andrecentworkhashighlightedreasoningcapabilitiesatlargerscaleswithasuitable
+prompting strategy (Wei et al., 2022; Chowdhery et al., 2022; Kojima et al., 2022; Lewkowycz et al., 2022).
+One downside of self-supervision has been the move towards uncurated data. Models may mirror misinfor-
+mation,stereotypesandbiasinthecorpus(Shengetal.,2019;Kuritaetal.,2019;Devetal.,2019;Blodgett
+et al., 2020; Sheng et al., 2021). This is undesirable for scientiﬁc tasks which value truth. Uncurated data
+also means more tokens with limited transfer value for the target use-case; wasting compute budget. For
+example, the PaLM corpus is 50% social media conversations, which may have limited transfer towards
+scientiﬁctasks(Chowdheryetal.,2022). Thepropertiesofscientiﬁctextalsodiﬀerfromgeneraltext-e.g.
+scientiﬁctermsandmathematics-meaningageneralcorpusandtokenizermaybeineﬃcient. Weexplore
+whether a normative approach to dataset selection can work with the large model paradigm in this work.
+ScientiﬁcLanguageModels WorkssuchasSciBERT,BioLMandothershaveshownthebeneﬁtofacurated,
+scientiﬁc corpus (Beltagy et al., 2019; Lewis et al., 2020a; Gu et al., 2020; Lo et al., 2019b; Gu et al., 2020; Shin
+etal.,2020;Hongetal.,2022). Thedatasetsandmodelsweretypicallysmallinscaleandscope,muchless
+thancorporaforgeneralmodels2. Beyondscientiﬁctext,TransformersforproteinsequencesandSMILES
+have shown potential for learning natural representations (Rives et al., 2021; Honda et al., 2019; Irwin et al.,
+2021;Nijkampetal.,2022;Linetal.,2022b). However,sequenceslikeSMILEShavedescriptivelimitationsfor
+representing chemical structure. We explore in this work whether a large, multi-modal scientiﬁc corpus can
+aid representation learning, where sequences occur alongside footprints and text in a signal-dense context.
+Scaling Laws The idea of "scaling laws" was put forward by Kaplan et al. (2020), who demonstrated
+evidence that loss scales as a power-law with model size, dataset size, and the amount of training compute.
+The focus was on upstream perplexity, and work by Tay et al. (2022a) showed that this does not always
+correlate with downstream performance. Hoﬀmann et al. (2022) presented new analysis taking into account
+theoptimalamountofdata,andsuggestedthatexistinglanguagemodelswereundertrained: "Chinchilla
+scaling laws". This work did not take into the account of fresh versus repeated tokens. In this work, we show
+that we can improve upstream and downstream performance by training on repeated tokens.
+Language Models as Knowledge Bases Storing information in weights is more unreliable in the sense
+models may blend information together, hallucination , but it is more "pliable" in the sense it can associate
+information through the representation space, association . Despite hallucination risks, there is evidence large
+language models can act as implicit knowledge bases with suﬃcient capacity (Petroni et al., 2019). They
+perform well on knowledge-intensive tasks such as general knowledge (TriviaQA) and specialist knowledge
+(MMLU) without an external retrieval mechanism (Brown et al., 2020; Hendrycks et al., 2020).
+The question of how to update network knowledge remains an active research question (Scialom et al.,
+2022; Mitchell et al., 2022). Likewise, the question of how to improve the reliability of generation is an
+active question(Gao et al., 2022). Despitetheselimitations, today’s large modelswill become cheaper with
+experience (Hirschmann, 1964), and so a growing proportion of scientiﬁc knowledge will enter weight
+memoryastrainingandre-trainingcostsfall. InthisworkweperformprobestoinvestigateGalactica’sdepth
+of knowledge, and show that the ability to absorb scientiﬁc knowledge improves smoothly with scale.
+Retrieval-Augmented Models Retrieval-augmentedmodelsaimtoalleviatetheshortcomingsofweight
+memory. ExamplesofsuchmodelsincludeRAG,RETROandAtlas(Lewisetal.,2020b;Borgeaudetal.,2021;
+Izacard et al., 2022). These models have the advantage of requiring less capacity but the disadvantage of
+needingsupportingretrievalinfrastructure. Sinceknowledgeisoftenﬁne-grained,e.g. thesequenceofa
+particular protein, or the characteristics of a particular exoplanet, retrieval will likely be needed in future
+evenforlarger models. Inthisworkwe focusonhowfarwecan gowithmodelweightsalone,but wenote
+the strong case for using retrieval augmentation for future research on this topic.
+2OneofthelargercorporaS2ORChas <20bntokens,whereascorporaforGPT-3andPaLMhave 300bntokens.
+ScholarBERT has a very large corpus at >200bn tokens, but the model is small at 770M capacity.
+3Galactica: A Large Language Model for Science
+Modality Entity Sequence
+Text Abell 370 Abell 370 is a cluster...
+LATEX Schwarzschild radius r_{s} = \frac{2GM}{c^2}
+Code Transformer class Transformer(nn.Module)
+SMILES Glycine C(C(=O)O)N
+AA Sequence Collagen -1(II) chain MIRLGAPQTL..
+DNA Sequence Human genome CGGTACCCTC..
+Table 1: Tokenizing Nature . Galactica trains on text sequences that represent scientiﬁc phenomena.
+Total dataset size = 106 billion tokens
+Data source Documents Tokens Token %
+Papers 48 million 88 billion 83.0%
+Code 2 million 7 billion 6.9%
+Reference Material 8 million 7 billion 6.5%
+Knowledge Bases 2 million 2 billion 2.0%
+Filtered CommonCrawl 0.9 million 1 billion 1.0%
+Prompts 1.3 million 0.4 billion 0.3%
+Other 0.02 million 0.2 billion 0.2%
+Table 2: The Galactica Corpus . A full breakdown of these sources is contained in the Appendix.
+3 Dataset
+“Natureiswritteninthatgreatbookwhicheverisbeforeoureyes–Imeantheuniverse–
+but we cannot understand it if we do not ﬁrst learn the language and grasp the symbols in
+which it is written."
+Galileo Galilei, The Assayer
+The idea that Nature can be understood in terms of an underlying language has a long history (Galilei,
+1623; Wigner, 1959; Wheeler, 1990). In recent years, deep learning has been used to represent Nature, such
+as proteins and molecules (Jumper et al., 2021; Ross et al., 2021). Amino acids are an alphabet in which
+the language of protein structure is written, while atoms and bonds are the language of molecules. At a
+higherlevel,weorganizeknowledgethroughnaturallanguage,andmanyworkshavetrainedonscientiﬁc
+text(Beltagyetal.,2019;Lewisetal.,2020a;Guetal.,2020;Loetal.,2019b). WithGalactica,wetrainasingle
+neural network on a large scientiﬁc corpus to learn the diﬀerent languages of science.
+Our corpus consists of 106billion tokens from papers, reference material, encyclopedias and other scientiﬁc
+sources. Wecombinenatural languagesources, suchaspapers andtextbooks,and naturalsequences, such
+as protein sequences and chemical formulae. We process L ATEX where we can capture it, and also include
+academiccodetocapturecomputationalscience. WehighlightthecorpusdetailsinTable1and2. Fulldetails,
+including dataset components and ﬁltering logic, are contained in the Appendix.
+4Galactica: A Large Language Model for Science
+[START_AMINO]MIRLGAPQTLVLLTLLVAAVLRCQGQDVQEAGSCVQDGQRYNDKDVWKPEPCRICVCDTG...[END_AMINO]
+Summary
+Protein: Collagen alpha-1(II) chain
+Gene: COL2A1
+Organism: Homo sapiens (Human)
+Status: evidence at protein level
+Function
+Type II collagen is speciﬁc for cartilaginous tissues. It is essential for the normal embryonic development of the
+skeleton,forlineargrowthandfortheabilityofcartilagetoresistcompressiveforces. [START_REF] Nucleotide
+sequence of the full length cDNA encoding for human type II procollage, Lee [END_REF] ...
+Features
+- Domain, 32-90, Cleavage; by procollagen N-endopeptidase
+- Site Cleavage, 181-182, Cleavage; by procollagen N-endopeptidase
+- Binding site, 1301, Ca2+
+...
+Figure1: Multi-ModalData . A protein sequence occurs in a document context along with annotations, text
+and citations from UniProt. Full contents of the document are cut for clarity of exposition.
+Notably the dataset is small and curated compared to other LLM corpuses, which are larger and uncurated.
+Thisisakeyquestionofthiswork: canwemakeaworkingLLMbasedonacurated, normative paradigm? If
+true, we could make more purposefully-designed LLMs by having a clear understanding of what enters the
+corpus, similar to expert systems which had normative standards (Jackson, 1990).
+3.1 Tokenization
+Tokenizationisanimportantpartofdatasetdesigngiventhediﬀerentmodalitiespresent. Forexample,protein
+sequencesarewrittenintermsofaminoacidresidues, wherecharacter-basedtokenizationisappropriate. To
+achieve the goal of specialized tokenization , we utilize specialized tokens for diﬀerent modalities:
+1.Citations : we wrap citations with special reference tokens [START_REF] and[END_REF] .
+2.Step-by-Step Reasoning : wewrapstep-by-stepreasoningwithaworkingmemorytoken <work>,
+mimicking an internal working memory context.
+3.Mathematics : for mathematical content, with or without LaTeX, we split ASCII operations into
+individual characters. Parentheses are treated like digits. The rest of the operations allow for unsplit
+repetitions. Operation characters are !"#$%&’*+,-./:;<=>?\^_‘ | and parentheses are ()[]{}.
+4.Numbers : we split digits into individual tokens. For example 737612.62 ->7,3,7,6,1,2,.,6,2 .
+5.SMILESformula : wewrapsequenceswith [START_SMILES] and[END_SMILES] andapplycharacter-
+based tokenization. Similarly we use [START_I_SMILES] and [END_I_SMILES] where isomeric
+SMILES is denoted. For example, C(C(=O)O)N!C,(,C,(,=,O,),O,),N .
+6.Amino acid sequences : we wrap sequences with [START_AMINO] and [END_AMINO] and apply
+character-based tokenization, treating each amino acid character as a single token. For example,
+MIRLGAPQTL ->M,I,R,L,G,A,P,Q,T,L .
+7.DNA sequences : we also apply a character-based tokenization, treating each nucleotide base as
+a token, where the start tokens are [START_DNA] and [END_DNA] . For example, CGGTACCCTC ->
+C, G, G, T, A, C, C, C, T, C .
+We cover a few of the specialized token approaches below that do not have clear parallels in the literature, in
+particular the working memory and citation tokens.
+5Galactica: A Large Language Model for Science
+Figure 2: Given a task like "What is the average of 43, 29, 51, 13?" a human can use internal or external
+working memory. In practice, they will use both symbiotically; meaning that working out that is written
+down in text is usually "missing" some steps performed internally.
+3.1.1 Working Memory Token, <work>
+Transformer-based architectures lack an explicit working memory capability, which means a single-forward
+pass has limited eﬃcacy. This is problematic for tasks that require multiple steps of computation. A current
+workaround is using a Transformer’s output context as an external working memory to read from and write
+to. Thisis seenin recentwork onchain-of-thought prompting(Wei etal.,2022; Suzgunet al.,2022). In one
+sense this is intuitive, as humans also augment their limited working memory with scratchpads. In another
+sense, we would like models to reﬁne their representations internally like humans; e.g. mental arithmetic.
+Therearetwolimitationswithchain-of-thought. First,itreliesonpromptdiscoverytoﬁndapromptthat
+elicits robust step-by-step reasoning; i.e. minimizes mistakes from doing too much in a single forward pass.
+Not only does this require ﬁnding a robust prompt that works in all cases, but it also often relies on few-shot
+exampleswhichtakeupcontextspace. Whatisworse,muchofthestep-by-stepreasoningontheinternet
+misses intermediate steps that a human has performed using internal memory. Humans do not write down
+every step they perform because it would lead to long and tedious answers. They write down the principal
+stepsofreasoning,anddolower-levelstepsviainternalworkingmemory. Thismeansthereis"missingdata"
+in written text, i.e. between written steps there are internal memory steps that are not explicitly stated.
+Secondly,chain-of-thoughtpromptingusestheneuralnetworktoperformtasksthatitisarguablynotbest
+suited to doing; for example, arithmetic. Prior work has shown that accuracy on tasks like multiplication is
+proportionaltotermfrequency(Razeghietal.,2022). Giventhatclassicalcomputersarespecializedfortasks
+likearithmetic,onestrategyistooﬄoadthesetasksfromtheneuralnetworktoexternalmodules. Forexample,
+prior work has looked at the possibilities of external tool augmentation, such as calculators (Thoppilan et al.,
+2022). However, this requires a strategy to identify where the neural network should oﬄoad; and it may
+notbestraightforwardwhencombinedwithadiscoveredzero-shotprompt,especiallywherelower-level
+computation steps are not explicitly stated in writing.
+Our solution is a working memory token we call <work>. We construct a few prompt datasets, see Table
+3, that wrap step-by-by-step reasoning within <work> </work> . Some of these datasets were generated
+programmatically ( OneSmallStep ), by creating a problem template and sampling the variables, others were
+sourced online ( Workout,Khan Problems ), and others used existing datasets and transformed them into a
+<work>basedcontext( GSM8ktrain ). Whereacomputationisperformedthatahumancouldnotdointernally,
+we oﬄoad by writing and executing a Python script. An example is shown in Figure 3. Importantly, we
+do not have to turn this on, and the model can also predict the output from running a program. For our
+experiments, we did not ﬁnd the need to turn Python oﬄoading on, and leave this aspect to future work.
+Longer term, an architecture change may be needed to support adaptive computation, so machines can have
+internalworkingmemoryonthelinesofworksuchasadaptivecomputationtimeandPonderNet(Graves,
+2016; Banino et al., 2021). In this paper, we explore the <work>external working memory approach as a
+6Galactica: A Large Language Model for Science
+Question: Aneedle 35 mmlong rests ona water surfaceat 20C. Whatforce over and above the needle’s weight
+is required to lift the needle from contact with the water surface? = 0:0728m.
+<work>
+= 0:0728 N=m
+=F=L
+0:0728 =F=(20:035)
+F= 0:0728(20:035)
+calculate.py
+‘‘‘
+f = 0.0728*(2*0.035)
+with open("output.txt", "w") as file:
+file.write(str(round(f, 5)))
+‘‘‘
+«run: "calculate.py">
+«read: "output.txt"»
+0.0051
+</work>
+Answer:F= 0:0051 N
+Figure 3: Model-Machine Symbiosis. We show an example answer with the <work> working memory
+token. It performs exact steps for rearranging the equation, and when it reaches a calculation that it cannot
+solve reliably in a forward-pass, it writes a program, which can then be oﬄoaded to a classical computer.
+Data source Split Prompts Tokens
+GSM8k (Cobbe et al., 2021) train 7,473 3,518,467
+OneSmallStep n/a 9,314 3,392,252
+Khan Problems (Hendrycks et al., 2021) n/a 3,835 1,502,644
+Workout n/a 921 470,921
+Total 21,543 9 million
+Table 3: Reasoning Datasets To train the model to use <work> we include several datasets in pre-training
+that incorporate this token. Full details are contained in the Appendix.
+bridge to the next step. Notably our <work>prompt datasets are not very large or diverse, so there are likely
+large further gains to be made with this approach.
+7Galactica: A Large Language Model for Science
+3.1.2 Citation Token
+Adistinctivepropertiesofacademictextiscitations. Inordertorepresenttheimplicitcitationgraphwithinthe
+text, we process citations with global identiﬁers and special tokens [START_REF] and[END_REF] signifying
+when a citation is made. Figure 4 shows an example of citation processed text from a paper.
+Recurrent neural networks, long short-term memory [START_REF] Long Short-Term Memory,
+Hochreiter [END_REF] and gated recurrent [START_REF] Empirical Evaluation of Gated Recurrent Neural
+Networks on Sequence Modeling, Chung [END_REF] neural networks in particular, have been ﬁrmly estab-
+lished as state of the art approaches in sequence modeling and transduction problems such as language
+modeling and machine translation [START_REF] Sequence to Sequence Learning with Neural Networks,
+Sutskever [END_REF][START_REF] Neural Machine Translation by Jointly Learning to Align and Translate,
+Bahdanau [END_REF][START_REF] Learning Phrase Representations Using RNN Encoder-Decoder for Statistical
+Machine Translation, Cho [END_REF] .
+Figure4: CitationProcessedText . Exampleofcitationprocessedtextfrom AttentionIsAllYouNeed (Vaswani
+et al., 2017). For title-processed citations, the title can be associated with the previous context.
+We considered two type of citation identiﬁer: (a) paper titles and (b) alphanumeric IDs. Based on ablations,
+wefoundthattitlebasedidentiﬁershavegreatercitationpredictionaccuracythanIDs. However,wealso
+foundthatpapertitlesaremorepronetohallucinationerroratlowerscalesgiventhetext-basednatureofthe
+identiﬁer. Weconsidertitleprocessingforthispaper,butwenotethetrade-oﬀsbetweenbothapproaches.
+Experiments for these ablations are contained in the Appendix.
+3.2 Prompt Pre-Training
+We deviate from existing language model research in one important direction, which is our decision to
+include prompts in pre-training alongside the general corpora. This is motivated by a number of observations.
+First, existing work has shown the importance of training token count on performance. The Chinchilla
+paper derived scaling "laws" taking into account number of tokens, training a 70bn model for 1.4 trillion
+tokens (Hoﬀmannet al., 2022). They obtained state-of-the-art performanceon MMLU,beating much larger
+models such as Gopher (Rae et al., 2021).
+Separately, research such as FLAN and T0 showed prompt tuning can boost downstream performance (Wei
+etal.,2021;Sanhetal.,2021;Chungetal.,2022). Theirstrategyinvolvedconvertingtaskstotextprompts,
+usingpromptdiversityinhowthetasksareposed,andthenﬁne-tuningonthesepromptdatasets. ForFLAN
+and T0, this approach boosts performance, beating larger models such as GPT-3 on many tasks.
+AndadditionallythereistheUniﬁedQAapproach(Khashabietal.,2020). Inthisapproach,aT5modelis
+ﬁne-tunedonquestionansweringdatasets,andisshowntoboostperformanceonout-of-domainquestion
+answering datasets (Raﬀel et al., 2020). The model outperforms GPT-3 on MMLU, a model 16 times larger.
+The ﬁrst streamof research above focuses on total training tokens as a way to boostperformance; i.e. it is
+token agnostic . Thesecond stream ofresearch focuses ontask-context tokens asa way toboost performance;
+i.e. it istoken selective . Since ﬁne-tuned smaller models beat larger few-shot models on tasks like MMLU, this
+suggests world knowledge may be present in smaller models, but task-context knowledge may be poor given
+the relative number of task-context tokens seen in the general corpus.
+For this paper, we opt to augment pre-training data with more task prompts to boost performance at lower
+scales. This is advantageous if it obviates the need for more data scale, e.g. a > 1trillion corpus, or more
+model scale. The largest 120B model we train runs on a single NVIDIA A100 node. Additionally, given that
+ﬁne-tuningrequiresexpertise,makingthemodelworkout-the-boxforpopulartaskslikequestionanswering
+andsummarizationismoreusefulforusersofthemodel. Lastly,byincludingpromptsalongsidegeneral
+data, we maximize the generality of the model while boosting performance on some tasks of interest.
+The closest analog to this approach for large language models is ExT5 (Aribandi et al., 2021). We take a
+similar approach by taking many machine learning training datasets, converting them to a text format, with
+prompt diversity, and then including them alongside general corpora in our pre-training set. A summary of
+prompt types is given in Table 4; the full details of datasets and prompts used are covered in the Appendix.
+8Galactica: A Large Language Model for Science
+Figure5: PromptPre-training . Pre-trainingweighsalltokensequallyaspartoftheself-supervisedloss. This
+leads to a weak relative signal for tasks of interest, meaning model scale has to be large to work. Instruction
+tuningboostsperformance posthoc, andcangeneralizetounseentasksofinterest, butitrisksperformancein
+tasks that are distant from instruction set tasks. Prompt pre-training has a weaker task of interest bias than
+instruction tuning but less risk of degrading overall task generality.
+Task Prompts Tokens
+Chemical Properties 782,599 275 million
+Multiple-Choice QA 256,886 31 million
+Extractive QA 30,935 13 million
+Summarization 6,339 11 million
+Entity Extraction 156,007 9 million
+Reasoning 21,543 9 million
+Dialog 18,930 5 million
+Binary QA 36,334 4 million
+Other 3,559 1 million
+Total 783,599 358 million
+Table 4: Pre-training Prompts . We include zero-shot prompts in pre-training to boost the task signal.
+Because of prompt inclusion, it is important to distinguish between in-domain performance, where the
+trainingdatasetisincludedinpre-training,andout-of-domainperformance,wherethetrainingdatasetisnot
+included in pre-training. We mark these results clearly in the Results section of this paper. Importantly, we
+do not advocate for prompt pre-training as an alternative to instruction tuning. In fact, instruction tuning on
+Galactica is likely useful follow-up work given its potential to boost performance on several tasks of interest.
+9Galactica: A Large Language Model for Science
+4 Method
+4.1 Architecture
+Galactica uses a Transformer architecture in a decoder-only setup (Vaswani et al., 2017), with the following
+modiﬁcations:
+•GeLU Activation - we use GeLU activations for all model sizes (Hendrycks and Gimpel, 2016).
+•Context Window - we use a 2048 length context window for all model sizes.
+•NoBiases -followingPaLM,wedonotusebiasesinanyofthedensekernelsorlayernorms(Chowd-
+hery et al., 2022).
+•LearnedPositional Embeddings - we use learned positional embeddings for the model. We experi-
+mentedwithALiBiatsmallerscalesbutdidnotobservelargegains,sowedidnotuseit(Pressetal.,
+2021).
+•Vocabulary -weconstructavocabularyof50ktokensusingBPE(Sennrichetal.,2015). Thevocabu-
+lary was generated from a randomly selected 2% subset of the training data.
+4.2 Models
+The diﬀerent model sizes we trained, along with training hyperparameters are outlined in Table 5.
+Model nparamsnlayersdmodelnheadsdheadsBatch Size Max LR Warmup
+GAL 125M 125M 12 768 12 64 0.5M 610 4375M
+GAL 1.3B 1.3B 24 2,048 32 64 1.0M 210 4375M
+GAL 6.7B 6.7B 32 4,096 32 128 2.0M 1:210 4375M
+GAL 30B 30.0B 48 7,168 56 128 2.0M 110 4375M
+GAL 120B 120.0B 96 10,240 80 128 2.0M 0:710 51.125B
+Table 5: Details of the models trained
+We train using AdamW with 1= 0:9,2= 0:95and weight decay of 0:1(Loshchilov and Hutter, 2017). We
+clip the global norm of the gradient at 1.0, and we use linear decay for learning rate down to 10% of it value.
+We use dropout and attention dropout of p= 0:1. We do not use embedding dropout. We found longer
+warmupwasimportantforthelargestmodelintheearlystagesoftrainingtoprotectagainsttheeﬀectsofbad
+initialization, which can have long-memory eﬀects on the optimizer variance state and slow down learning.
+This may be speciﬁc to our model and training setup, and it is not clear whether this advice generalizes.
+4.3 Libraries and Infrastructure
+We use the metaseq library3for training the models, built by the NextSys team at Meta AI.
+For training the largest 120B model, we use 128 NVIDIA A100 80GB nodes. For inference Galactica 120B
+requiresasingleA100node. Wechoosethemaximummodelsizetoobeythisconstraintfordownstream
+accessibility, and we will work to improve its accessibility for the research community in coming months.
+3https://github.com/facebookresearch/metaseq/
+10Galactica: A Large Language Model for Science
+Figure6: RepeatedTokensandValidationLoss . Withfourepochsoftraining,wecontinuetoseevalidation
+lossfallforallmodelsizes. Forthe120Bmodelweseetheﬁrstsignsofoverﬁttingatthebeginningofthe
+ﬁfth epoch, and we early stop at this point.
+5 Results
+5.1 Repeated Tokens Considered Not Harmful
+Wetrainthemodelsfor450billiontokens,orapproximately4.25epochs. Weﬁndthatperformancecontinues
+to improve on validation set, in-domain and out-of-domain benchmarks with multiple repeats of the corpus.
+First,fromFigure6,validationlosscontinuestofallwithfourepochsoftraining. Thelargest120Bmodel
+only begins to overﬁt at the start of the ﬁfth epoch. This is unexpected as existing research suggests repeated
+tokens can be harmful on performance (Hernandez et al., 2022). We also ﬁnd the 30B and 120B exhibit a
+epoch-wise double descent eﬀect of plateauing (or rising) validation loss followed by a decline. This eﬀect
+becomes stronger with each epoch, and is most visible above with the 120B model towards end of training.
+Toinvestigatefurther,weexaminetheper-sourcebreakdownofvalidationlosstoseeifthereisheterogeneity
+inlossbehaviour. WeplotexamplecurvesinFigure23overleafforthe30Bmodel. Weseenosignsofloss
+heterogeneity: loss falls for all sources. The 120B exhibits the same relative trend of declining validation loss
+for all sources until the beginning of ﬁfth epoch, where all sources spike (see Appendix).
+The next question to answer is whether this trend extends to downstream performance and out-of-domain
+generalization. Forthisweusea57tasksubsetof BIG-bench subset,ageneralcorpuswithprincipallynon-
+scientiﬁc tasks and prompt types not included in pre-training (Srivastava et al., 2022). We plot results in
+Figure 8. We see no signs of overﬁtting suggesting that use of repeated tokens is improving downstream
+performance as well as upstream performance.
+Wesuspectthattwofactorscouldbeatplay,a qualityfactor ,thecuratednatureofthecorpusenablesmore
+value per token to be extracted, or a modality factor , the nature of scientiﬁc data enables more value per
+token to be extracted. The missing step of causation is what leads speciﬁcally from either factor towards less
+overﬁtting, and we leave this question to further work. We note the implication that the " tokens!1" focus
+of current LLM projects may be overemphasised versus the importance of ﬁltering the corpus for quality.
+In the following sections, we turn to evaluating Galactica’s scientiﬁc capabilities. Speciﬁcally, we focus on the
+high-leveldesigngoalsofbuildinganLLMthatcanstore,combineandreasonaboutscientiﬁcknowledge-
+as these are needed for building a new interface for science.
+11Galactica: A Large Language Model for Science
+Figure7: ValidationLossPerSource . Validationlossfallsthroughtrainingforalldatasetcategories. Results
+are shown for the 30B model above. The 120B exhibits the same relative trend of declining validation loss for
+all sources until the beginning of ﬁfth epoch, where all sources spike (see Appendix).
+Figure 8: BIG-bench Performance During Training . The 57 task selection from BIG-bench contains princi-
+pally non-scientiﬁc tasks. We use it as a proxy for out-of-domain performance. For the 120B model above, we
+see no signs of overﬁtting after four repeats of the corpus.
+12Galactica: A Large Language Model for Science
+5.2 Knowledge Probes
+First, we examine how well Galactica absorbs scientiﬁc knowledge. We set up several knowledge probe
+benchmarks,buildingoﬀtheLAMAapproachofPetronietal.(2019). Thesewerecriticalmetricsduring
+model development for identifying knowledge gaps within the corpus, and informing how to iterate the
+corpus. They also provide insight into the relative knowledge strengths of Galactica versus general language
+models, and we cover these results in this section before turning to the downstream tasks.
+5.2.1 LaTeX Equations
+WeconstructadatasetofpopularLaTeXequationsfromtheﬁeldsofchemistry,physics,mathematics,statistics
+and economics. Memorisation of equations is useful to measure as it is necessary for many downstream
+tasks;forexample,recallinganequationtouseaspartofananswertoaproblem. Unlessstatedexplicitly,
+Galactica results are reported as zero-shot. In total there are 434 equations we test for the knowledge probe.
+We prompt with an equation name and generate LaTeX. An example is shown in Figure 9.
+Prompt
+The formula for Bessel’s diﬀerential equation is:
+Generated Answer
+x2d2y
+dx2+xdy
+dx+ 
+x2 2
+y= 0
+Figure 9: LaTeX Equations Probe . We prompt for the name of an equation and evaluate whether the
+generated LaTeX is correct. We manually evaluate given the possibility of multiple correct answers.
+We summarizethe resultsin Table6. Equationknowledge increasessmoothly withscale. Galacticaoutper-
+forms larger language models trained on general corpuses, indicating the value of a curated dataset.
+Model Params (bn) Chemistry Maths Physics Stats Econ Overall
+OPT 175 34.1% 4.5% 22.9% 1.0% 2.3% 8.9%
+BLOOM 176 36.3% 36.1% 6.6% 14.1% 13.6% 21.4%
+GPT-3 ( text-davinci-002 ) ? 61.4% 65.4% 41.9% 25.3% 31.8% 49.0%
+GAL 125M 0.1 0.0% 0.8% 0.0% 1.0% 0.0% 0.5%
+GAL 1.3B 1.3 31.8% 26.3% 23.8% 11.1% 4.6% 20.5%
+GAL 6.7B 6.7 43.2% 59.4% 36.2% 29.3% 27.3% 41.7%
+GAL 30B 30 63.6% 74.4% 35.2% 40.4% 34.1% 51.5%
+GAL 120B 120 79.6% 83.5% 72.4% 52.5% 36.4% 68.2%
+Table 6: Results on LaTeX equations . Results are evaluated zero-shot.
+5.2.2 Domain Probes
+We also set up domain probes to track specialized knowledge for certain ﬁelds. We detail these below:
+•AminoProbe : a dataset of names, structures and properties of the 20 common amino acids.
+•BioLAMA : a dataset of biomedical factual knowledge triples.
+•Chemical Reactions : a dataset of chemical reactions.
+•Galaxy Clusters : a dataset of galaxy clusters with their constellation classiﬁcations.
+•Mineral Groups : a dataset of minerals and their mineral group classiﬁcations.
+In each case, we construct a prompt to test the knowledge. For example, for Chemical Reactions , we ask
+Galacticatopredict theproductsofthereactionin the chemicalequationLaTeX.We maskoutproductsin
+the description so the model is inferring based on the reactants only. An example is shown in Figure 10.
+13Galactica: A Large Language Model for Science
+Prompt
+Sulfuric acid reacts with sodium chloride, and gives _____and_____:
+\[ \ce{ NaCl + H2SO4 ->
+Generated Answer
+NaCl + H 2SO4  ! NaHSO 4+ HCl
+Figure10: ChemicalReactions . We prompt based on a description and reactants, and evaluate whether the
+generated products are correct.
+We report results for these knowledge probes in Table 7.
+Model Params (bn) Amino BioLAMA Reactions Clusters Minerals
+OPT 175 12.0% 7.1% 12.7% 21.7% 1.6%
+BLOOM 176 14.0% 9.7% 22.4% 15.0% 10.3%
+GPT-3 ( text-davinci-002 ) ? 14.0% 8.4% 35.1% 20.8% 18.3%
+GAL 125M 0.1 12.0% 3.1% 0.3% 6.7% 0.0%
+GAL 1.3B 1.3 16.0% 7.2% 14.4% 14.2% 10.3%
+GAL 6.7B 6.7 17.0% 7.9% 26.4% 17.5% 8.7%
+GAL 30B 30 21.0% 6.9% 36.5% 20.0% 17.5%
+GAL 120B 120 21.0% 8.0% 43.1% 24.2% 29.4%
+Table 7: Results on Domain Probes . Results are evaluated zero-shot.
+We also observe steady scaling behaviour in these knowledge probes, with the exception of BioLAMA which
+we suspect reﬂects zero-shot prompt diﬃculty for all LLMs. Notably ﬁne-grained factual knowledge, such as
+"ConstellationOf(GalaxyCluster) " type-queries seems to scale smoothly with the size of the model.
+14Galactica: A Large Language Model for Science
+5.2.3 Reasoning
+Wenowturntoreasoningcapabilitieswiththe <work>token. Westartbyevaluatingonthe MMLUmath-
+ematics benchmarks, which we report in Table 8 (Hendrycks et al., 2020). Galactica performs strongly
+compared to larger base models, and use of the <work>token appears to boost performance over Chinchilla,
+even for the smaller 30B Galactica model.
+Mathematics MMLU
+Model Params (bn) A.Algebra Elem HS College F. Logic Average
+BLOOM (5-shot) 176 25.0% 26.7% 27.0% 25.0% 26.2% 26.4%
+OPT (5-shot) 175 21.0% 25.7% 24.4% 33.0% 29.4% 26.7%
+Gopher (5-shot) 280 25.0% 33.6% 23.7% 37.0% 35.7% 30.6%
+Chinchilla (5-shot) 70 31.0% 41.5% 31.9% 32.0% 33.3% 35.7%
+GAL 1.3B 1.3 28.0% 27.2% 26.7% 30.0% 24.6% 27.1%
+GAL 6.7B 6.7 28.0% 28.9% 26.7% 36.0% 31.0% 29.2%
+GAL 30B 30 30.0% 30.2% 26.3% 36.0% 31.7% 29.9%
+GAL 120B 120 33.0% 38.1% 32.6% 43.0% 32.5% 35.8%
+GAL 1.3B <work> 1.3 22.0% 24.6% 18.9% 25.0% 31.0% 24.6%
+GAL 6.7B <work> 6.7 33.3% 30.7% 25.2% 26.0% 33.3% 28.0%
+GAL 30B <work> 30 33.0% 41.5% 33.3% 39.0% 37.3% 37.1%
+GAL 120B <work> 120 27.0% 54.2% 37.0% 44.0% 40.5% 41.3%
+Table 8: Results on Mathematics MMLU . Galactica is evaluated without few-shot examples. With the
+<work> token we see large gains in performance. Results are on MMLU test.
+We also evaluate on the MATH dataset to further probe the reasoning capabilities of Galactica (Hendrycks
+etal.,2021). Wecomparethe <work>tokenpromptdirectlywiththeMinerva5-shotchain-of-thoughtprompt
+mCoTfor comparability. We report results in Table 9.
+MATH Results
+Model Alg CProb Geom I.Alg N.Theory Prealg Precalc Average
+Base Models
+GPT-3 175B (8-shot) 6.0% 4.7% 3.1% 4.4% 4.4% 7.7% 4.0% 5.2%
+PaLM 540B (5-shot) mCoT 9.7% 8.4% 7.3% 3.5% 6.0% 19.2% 4.4% 8.8%
+GAL 30B <work> 15.8% 6.3% 5.8% 4.9% 2.4% 19.4% 8.2% 11.4%
+GAL 30B (5-shot) mCoT 17.9% 6.8% 7.9% 7.0% 5.7% 17.9% 7.9% 12.7%
+GAL 120B <work> 23.1% 10.1% 9.8% 8.6% 6.5% 23.8% 11.7% 16.6%
+GAL 120B (5-shot) mCoT 29.0% 13.9% 12.3% 9.6% 11.7% 27.2% 12.8% 20.4%
+Fine-tuned LaTeX Models
+Minerva 540B (5-shot) mCoT51.3% 28.0% 26.8% 13.7% 21.2% 55.0% 18.0% 33.6%
+Table 9: Results on MATH .Withboththechain-of-thoughtand <work>tokenprompts,Galacticaexceeds
+PaLM’s performance with 18 times less capacity.
+We see that Galactica outperforms the base PaLM model by a signiﬁcant margin, with both chain-of-thought
+and<work>prompts. Galactica30BoutperformsPaLM540Bonbothprompts: an18timessmallermodel.
+This suggests Galactica may be a better base model for ﬁne-tuning towards mathematical tasks.
+WereportMinervaresultsforcompleteness,whichisa540BPaLMﬁne-tunedtowardsLaTeXspeciﬁcally.
+MinervaoutperformsbaseGalactica,buttheperformancediﬀerencesarenon-uniform;whichpointstowards
+diﬀerent mathematical data biases. For a direct comparison to Minerva, the model is freely available for
+those who want to ﬁnetune Galactica towards LaTeX speciﬁcally as follow-up work.
+15Galactica: A Large Language Model for Science
+5.3 Downstream Scientiﬁc NLP
+WenowevaluateondownstreamscientiﬁctaskstoseehowwellGalacticacancomposeitsknowledgein
+diﬀerenttaskcontexts. Wefocusonknowledge-intensivescientiﬁctasksandreportfullresultsinTable10.
+For this we use the MMLU benchmark as well as some other popular scientiﬁc QA benchmarks. We include
+the MMLU results earlier without <work> to test for knowledge association speciﬁcally. Full MMLU results,
+including social sciences and other ﬁelds, are reported in the Appendix. We also perform data leakage
+analysis on these benchmarks for more conﬁdence; results are in the Appendix.
+From Table 10, Galactica can compose its knowledge into the question-answering task, and performance
+isstrong;signiﬁcantlyoutperformingtheotheropenlanguagemodels,andoutperformingalargermodel
+(Gopher 280B) in the majority of tasks. Performance against Chinchilla is more variable, and Chinchilla
+appearsto bestrongerina subsetoftasks: in particular,high-school subjectsandless-mathematical,more
+memorization intensive tasks. In contrast, Galactica tends to perform better in mathematical and graduate-
+level tasks.
+OurworkinghypothesisisthattheGalacticacorpusisbiasedtowardsgraduatescientiﬁcknowledge,givenit
+consistsmostlyofpapers,whichexplainslaggingperformanceinhigh-schoolsubjects. Whilewedopick
+upsomehigh-schoollevelcontentthroughencyclopedias,textbooksandtheﬁlteredCommonCrawl,this
+amounts to a small quantity of tokens (a few billion). We leave the question of how to capture more of this
+base scientiﬁc knowledge in a curated way to future work.
+On remaining tasks, we achieve state-of-the-art results over ﬁne-tuned models at the time of writing. On
+PubMedQA,weachieveascoreof77.6%whichoutperformsthestate-of-the-artof72.2%(Yasunagaetal.,
+2022). OnMedMCQAdevweachievescoreof52.9%versusthestate-of-the-artof41.0%(Guetal.,2020).
+For BioASQ and MedQA-USMLE, performance is close to the state-of-the-art performance of ﬁne-tuned
+models (94.8% and 44.6%) (Yasunaga et al., 2022).
+Dataset Domain GAL OPT BLOOM GPT-3 Gopher Chinchilla
+Abstract Algebra out-of-domain 33.3% 21.0% 25.0% - 25.0% 31.0%
+ARC Challenge in-domain 67.9% 31.1% 32.9% 51.4% - -
+ARC Easy in-domain 83.8% 37.4% 40.7% 68.8% - -
+Astronomy out-of-domain 65.1% 23.0% 25.7% - 65.8% 73.0%
+BioASQ in-domain 94.3% 81.4% 91.4% - - -
+Biology (College) out-of-domain 68.8% 30.6% 28.5% - 70.8% 79.9%
+Biology (High-School) out-of-domain 69.4% 27.7% 29.4% - 71.3% 80.3%
+Chemistry (College) out-of-domain 46.0% 30.0% 19.0% - 45.0% 51.0%
+Chemistry (High-School) out-of-domain 47.8% 21.7% 23.2% - 47.8% 58.1%
+Comp. Science (College) out-of-domain 49.0% 17.0% 6.0% - 49.0% 51.0%
+Comp. Science (High-School) out-of-domain 70.0% 30.0% 25.0% - 54.0% 58.0%
+Econometrics out-of-domain 42.1% 21.0% 23.7% - 43.0% 38.6%
+Electrical Engineering out-of-domain 62.8% 36.6% 32.4% - 60.0% 62.1%
+Elementary Mathematics out-of-domain 38.1% 25.7% 27.6% - 33.6% 41.5%
+Formal Logic out-of-domain 32.5% 29.4% 26.2% - 35.7% 33.3%
+Machine Learning out-of-domain 38.4% 28.6% 25.0% - 41.1% 41.1%
+Mathematics (College) out-of-domain 43.0% 33.0% 25.0% - 37.0% 32.0%
+Mathematics (High-School) out-of-domain 32.6% 24.4% 27.0% - 23.7% 31.9%
+Medical Genetics out-of-domain 70.0% 35.0% 36.0% - 69.0% 69.0%
+Physics (College) out-of-domain 42.2% 21.6% 18.6% - 34.3% 46.1%
+Physics (High-School) out-of-domain 33.8% 29.8% 25.2% - 33.8% 36.4%
+MedQA-USMLE out-of-domain 44.4% 22.8% 23.3% - - -
+MedMCQA Dev in-domain 52.9% 29.6% 32.5% - - -
+PubMedQA in-domain 77.6% 70.2% 73.6% - - -
+Statistics (High-School) out-of-domain 41.2% 43.5% 19.4% - 50.0% 58.8%
+Table 10: Question Answering Results . Galactica is evaluated without few-shot examples. Other LLMs are
+evaluated5-shot,exceptfor0-shotresultsforGPT-3onARCresultsandOPTandBLOOMonPubMedQA
+and BioASQ. For abstract algebra and medical genetics, we obtained best results with 30B, so we report these
+scores; the 120B scores for these were 27.0% and 68.0% respectively. Rest of results are for 120B.
+16Galactica: A Large Language Model for Science
+5.4 Citation Prediction
+In this section we evaluate Galactica’s capability to predict citations given an input context, which is an
+importanttestofGalactica’scapabilitytoorganizethescientiﬁcliterature. Weﬁndthatbothaccuracyand
+the quality of distributional approximation improves with scale.
+5.4.1 Citation Accuracy
+We construct three datasets to evaluate the model’s capability to cite:
+•PWC Citations : a datasetwith 644pairs ofmachine learningconcepts andpapers that introduced
+them. Conceptsconsistofmethods(e.g. ResNet)anddatasets(e.g. ImageNet )fromPaperswithCode4.
+•Extended Citations : a dataset with 110 pairs of non-machine learning concepts and papers that
+introduced them. Examples of concepts include Kozac sequence andBreit-Wigner distribution .
+•ContextualCitations : adatasetwith1,869pairsofreferencesandcontextsfromourarXivvalidation
+set. The dataset is constructed by sampling 1,000 random references and collecting their contexts.
+For thePWC Citations andExtended Citations datasets, the citation prediction task is framed as a text
+generation task. The model is given a prompt like "In this paper we use ResNet method [START_REF] " in
+ordertogenerateapredictionforthe ResNetconcept. For Contextual Citations ,wepromptaftertheinput
+context for the citation, where the context ends with [START_REF] .
+We compare Galactica to sparse and dense retrieval-based approaches on this task.
+Forthesparsebaseline,weuseElasticSearchtocreateanindexofallthereferences,includingtheirtitles,
+abstracts,andshortsnippetsoftextwiththecontextstheyappearin. Then,givenatextquery,weretrieve
+the top references ordered by the sum of matching scores across all selected ﬁelds.
+For dense retriever baselines, we evaluate two diﬀerent Contriever models (Izacard et al., 2021). The ﬁrst is
+the pre-trained model released by Izacard et al. (2021). The second model we use is ﬁne-tuned on a random
+subset of 10 million context/paper pairs from our corpus, trained to retrieve the right paper given a context
+beforeacitation. Thesetupfordenseretrievalis: (1)eachreferenceisencodedbythemodelusingitstitle
+and abstract, (2) a text query is encoded by the same model, (3) the references that match the query re
+returned. Retrieval is performed using a FAISS index (Johnson et al., 2019).
+The results can be seen in Table 11.
+Model Params (bn) PWC Citations Extended Citations Contextual Citations
+GAL 125M 0.1 7.0% 6.4% 7.1%
+GAL 1.3B 1.3 18.5% 45.5% 15.9%
+GAL 6.7B 6.7 32.0% 60.0% 23.0%
+GAL 30B 30 44.7% 66.4% 31.5%
+GAL 120B 120 51.9% 69.1% 36.6%
+Sparse Retriever n/a 30.9% 17.3% 5.3%
+Dense Retriever (base) n/a 16.4% 8.8% 1.6%
+Dense Retriever (ﬁne-tuned) n/a 27.6% 11.8% 8.2%
+Table 11: Citation Prediction Accuracy . Performance of diﬀerent model sizes on citation prediction.
+Theperformanceonallevaluationsetsincreasessmoothlywithscale. Atlargerscales,Galacticaoutperforms
+the retrieval-based approaches as its context-associative power improves. This is an important result as
+current approaches for navigating the literature use these existing retrieval approaches. As the power of
+language models improves, we suspect they will become a valuable new tool for exploring the literature.
+17Galactica: A Large Language Model for Science
+(a) Kolmogorov-Smirnov Distance
+ (b) Histogram Overlap
+Figure11: DistributionalComparisonofCitations . Galactica’scitationdistributionapproachestheground
+truth with scale. This is seen through a declining KS distance with scale, and increasing histogram overlap.
+Prompt
+in the BQ literature as, when pis a mixture of Gaussians, the mean element pis analytically tractable (see
+AppendixC).Someother (p;k)pairsthatproduceanalyticmeanelementsarediscussedin[ [START_REF] On
+the Equivalence between Kernel Quadrature Rules and Random Feature Expansions, Bach [START_REF] ].
+For this simulation study, we took p(x)to be a 20-component mixture of 2D-Gaussian distributions. Monte Carlo
+(MC) is often used for such distributions but has a slow convergence rate in OP(n 1=2). FW and FWLS are
+known to converge more quickly and are in this sense preferable to MC [ [START_REF]
+Prediction
+On the Equivalence between Herding and Conditional Gradient Algorithms, Bach
+Figure 12: Citation Prompt . An example prompt predicting a citation in-context; from Briol et al. (2015).
+5.4.2 Citation Distributional Analysis
+WenowturntolookathowwellGalacticacanmodeltheempiricalcitationdistribution. Forthisanalysis
+weusethe Contextual Citations dataset,wherepromptsareextractedfromapaperbytakingthecontext
+before a citation as the prompt. An example prompt with a model prediction is shown overleaf in Figure 12.
+Weusethein-contextcitationdatatoanalysethedistributionaldiﬀerencebetweenpredictedandgroundtruth
+paper counts. This allows us to assess the model bias towards predicting more popular papers. Speciﬁcally,
+foreachcontextthereisagroundtruthandpredictedreference. Wecountthenumberoftimeseachreference
+appears in our corpus. We then compare the distribution of reference counts between the ground truth
+references and the predicted references using the Kolmogorov-Smirnov distance (Massey, 1951).
+ThecomparisonbetweenthecitationcountdistributionsfordiﬀerentmodelsizescanbeseeninFigure11.
+Figure11ashowsthedecreaseintheKolmogorov-Smirnovdistancebetweenthedistributionofgroundtruth
+paper citations and the distribution of predicted papers citations. Figure 11b shows how the distribution of
+papercountsforthepredictedpapersgetsclosertothegroundtruthasthemodelsizegrows. Atsmaller
+scales the model is more prone to predicting more popular papers. As the model grows in size this bias
+towards predicting popular papers diminishes.
+4https://paperswithcode.com
+18Galactica: A Large Language Model for Science
+5.5 General Capabilities
+WehavestudiedGalactica’sscientiﬁccapabilities. Itisperhapsnotsurprisingthataspecialistscientiﬁcmodel
+outperforms general models on scientiﬁc tasks, but what would be more surprising was if it outperformed
+general models on general NLP tasks. In this section, we show surprising evidence that it does just that.
+We evaluate on 57 BIG-bench tasks in Table 12 (Srivastava et al., 2022). The tasks are primarily non-scientiﬁc
+and test general language capability, for example anachronisms, ﬁgure of speech and metaphor boolean.
+We always evaluate with 5-shots, and we use the default prompt style from BIG-Bench. Importantly, we do
+notincludethispromptstyleinpre-training;sotheevaluationbetweenGalacticaandtheothermodelsis
+comparable 5-shot. Full details and results are in the Appendix. We summarize average scores in Table 12:
+Model Params (bn) Accuracy Accuracy
+weighted unweighted
+OPT 30B 30 39.6% 38.0%
+BLOOM 176B 176 42.6% 42.2%
+OPT 175B 175 43.4% 42.6%
+GAL 30B 30 46.6% 42.7%
+GAL 120B 120 48.7% 45.3%
+Table 12: BIG-bench 57 Task Results . Galactica outperforms general open models at smaller scales.
+Boththe30Band120BGalacticamodelsoutperformthelargerOPTandBLOOMgeneralmodels. Thisisa
+surprising result given we designed Galactica to trade-oﬀ generality for performance in scientiﬁc tasks.
+We suspect this result reﬂects the higher-quality of the Galactica corpus, stemming from the fact it is
+curatedandalsoprimarilyacademictext. PreviousopenLLMeﬀortslikelyoverfocusedonscalegoalsand
+underfocused on data ﬁltering. Another implication is that the focus on tokens !1from Chinchilla needs
+to be complemented with strong data quality procedures (Hoﬀmann et al., 2022). With this paper, we took
+an opposite approach by focusing on high-quality tokens and repeated epochs of training. However, the
+Chinchilla insight stands: and there is much more scientiﬁc text that we have not exploited in this work.
+5.6 Chemical Understanding
+We now turn to Galactica’s capability to interface with diﬀerent scientiﬁc modalities. We start by looking at
+Galactica’schemicalcapabilities. Chemicalpropertiesexhibitcomplexcorrelationswhichmeansthechemical
+spaceisverylarge. Betterorganizationofchemicalinformationthroughlanguagemodelscouldaidchemical
+design and discovery. We explore how Galactica can provide a new interface for these tasks in this section.
+For this work, we only include a small subset of available compounds from PubChem Compound in pre-
+training. Speciﬁcally,wetakearandomsubset( 2million)oftotalcompounds( 110million). Thisistoensure
+the model is not overly biased towards learning natural sequences over natural language. This is a constraint
+we can relax in future work, enabling for much larger corpus. Here we focus on the ﬁrst step of investigating
+whether a single model can learn eﬀectively in the multi-modal setting.
+We ﬁnd that a language model can learn chemical tasks such as IUPAC naming in a self-supervised way, and
+in addition, we can pose drug discovery tasks as natural language prompts and achieve reasonable results.
+5.6.1 IUPAC Name Prediction
+SMILES is a line notation which represents chemical structure as a sequence of characters (Weininger, 1988).
+In the Galactica corpus, the SMILES formula occurs alongside information in the document, such as IUPAC
+names,molecularweightandXLogP.Inthecontextofself-supervisedlearning,thismeansalanguagemodel
+is performing implicit multi-task learning: the model is predicting the next SMILES token, but can also use
+SMILES to predict other entities in the document.
+Asaninitialtest,wesetupa IUPACNamePrediction task,wherethetaskistonameacompoundaccording
+to the IUPAC nomenclature given a SMILES formula input. The IUPAC nomenclature is a method of naming
+organic compounds that has a ruleset based on naming the longest chain of carbons connected by single
+bonds (Favre and Powerll). There is a large set of rules and the procedure is algorithmically complex,
+meaning it is hard to automate. As a result, it is missing from standard cheminformatics toolkits.
+19Galactica: A Large Language Model for Science
+PreviousworkssuchasSTOUTandStruct2IUPAChaveexploredthepossiblityofusingRNNsandTrans-
+formersforthistask(Rajanetal.,2021;Krasnovetal.,2021). WeexploreinthissectionwhetherGalacticacan
+translate a SMILES speciﬁcation to its IUPAC name in the self-supervised setting. We design a prompt based
+on the PubChem structure, with the SMILES as the only input, and the output to predict the IUPAC name.
+Toevaluate,weuseourcompoundvalidationsetof17,052compounds,andpromptwiththeSMILESformula
+and predict the IUPAC name. To calculate accuracy, we use OPSIN to convert the generated IUPAC name to
+SMILES, canonicalize it and compare with the canonicalized SMILES target (Lowe et al., 2011).
+Results are shown in Table 13.
+Model Params (bn) Accuracy Invalid Names
+GAL 125M 0.1 0.0% 32.8%
+GAL 1.3B 1.3 2.5% 12.0%
+GAL 6.7B 6.7 10.7% 12.3%
+GAL 30B 30 15.4% 9.7%
+GAL 120B 120 39.2% 9.2%
+Table 13: Results on IUPAC Naming . Performance improves smoothly with scale.
+Accuracyincreasessmoothlywithscale. Givenwerestrictedthecorpusto2millionmolecules,itislikely
+much better performance is achievable through training or ﬁne-tuning on more molecules. The model is
+freely available for those who want to perform this follow-up work.
+The more immediate question is what is actually being learnt: is Galactica inferring names from the fun-
+damental molecular structure? To answer this, we visualize the average atomic attention at each stage of
+a prediction in Figure 13 overleaf. Encouragingly, the results are interpretable in terms of the underlying
+chemistry, and Galactica attends to the correct group when predicting a name, e.g. for "amino" it attends
+primarily to the NH 2substituent.
+20Galactica: A Large Language Model for Science
+Task: Convert the SMILES to IUPAC Name
+Example: CC(C)(C)C(=O)N(CC1=NC(=CS1)C(=O)OC)C2CCCCC2
+Atomic Attention Predicted So Far Token Predicted
+- methyl
+methyl 2-[[cyclohexyl cyclohexyl
+methyl 2-[[cyclohexyl-(2,2- dimethyl
+methyl 2-[[cyclohexyl-(2,2-dimethyl prop
+methyl 2-[[cyclohexyl-(2,2-dimethylprop anoyl
+methyl 2-[[cyclohexyl-(2,2-dimethylpropanoyl) amino
+methyl 2-[[cyclohexyl-(2,2-dimethylpropanoyl)]amino]
+methyl]th
+methyl 2-[[cyclohexyl-(2,2-dimethylpropanoyl)]amino]
+methyl]thiazole
+methyl 2-[[cyclohexyl-(2,2-dimethylpropanoyl)]amino]
+methyl]thiazole-4-carboxylate
+Figure 13: Attending to Functional Groups . Galactica uses its knowledge of chemistry to help with the
+IUPAC Naming task. At each stage of prediction, it attends to the part of the molecular graph associated
+with the group name, e.g. for "amino" it attends to the nitrogen atom; for thiazole, the sulphur atom.
+21Galactica: A Large Language Model for Science
+5.6.2 MoleculeNet
+Wenowexplorewhetherwecanposetraditionaldrugdiscoverytasksinanaturallanguageformat,combining
+the diﬀerent modalities involved. Humans organize knowledge via natural language, and so learning an
+interface between natural language and scientiﬁc modalities like SMILES could be a new tool for navigating
+the chemical space. We use MoleculeNet classiﬁcation benchmarks to answer this question, which are
+summarized in Table 14 (Wu et al., 2017).
+Category Dataset Type Other modalities
+BiophysicsHIV Classiﬁcation n/a
+BACE C Classiﬁcation n/a
+PhysiologyBBBP Classiﬁcation n/a
+Tox21 Classiﬁcation protein sequences
+SIDER Classiﬁcation n/a
+ClinTox Classiﬁcation n/a
+Table 14: MoleculeNet datasets used for evaluation . We convert training sets to text format and include in
+pre-training. We evaluate using the splits suggested by the DeepChem library (Ramsundar et al., 2019).
+To evaluate, we include the training sets in pre-training by converting to a text format. We use prompt
+randomization(varyinghowthequestionisposed). Forexample,forBBBPthetrainingprompthasforms
+like in Figure 14 below. These examples occur alongside the other corpuses in training, and each example is
+seen just over 4times. This is not comparable to directﬁne-tuning or supervision due to the presence of other
+data in pre-training, so it might be considered a form of weak supervision instead.
+Here is a SMILES formula:
+[START_I_SMILES]O=C(O)CCCC1=CC=C(N(CCCl)CCCl)C=C1[END_I_SMILES]
+Question: Will the chemical compound penetrate the blood-brain barrier?
+Answer: No
+Figure 14: BBBP Prompt . We include the SMILES and pose the classiﬁcation problem in natural language.
+ForsomeMoleculeNetdatasets,othermodalitiesareimplicitlypresent. Forexample,intheTox21dataset,
+bioassays concern particular receptors such as the androgen receptor (AR). As an experiment, we decided to
+frame the task in a text format with the protein sequence and the SMILES as part of the prompt. We show an
+example for Tox21 in Figure 15.
+Here is a sequence for a protein:
+[START_AMINO]MEEPQSDPSVEPPLSQETFSDLWKLLPE...[END_AMINO]
+And here is an isomeric SMILES for a compound:
+[START_I_SMILES]CC(O)(P(=O)(O)O)P(=O)(O)O[END_I_SMILES]
+Question: Will the the chemical compound be active against this protein?
+Answer: No
+Figure15: Tox21 Prompt . We include the protein sequence and the SMILES formula and pose the classiﬁca-
+tion problem in natural language.
+WemakesuretoKekulizetheSMILEStobeconsistentwithPubChemrepresentations. Forevaluation,we
+use the recommended splits from the DeepChem library (Ramsundar et al., 2019).
+22Galactica: A Large Language Model for Science
+Positive Examples
+(a)Danazol (28417) on NR-AR
+ (b)Gestodene (3033968) on NR-AR
+ (c)Mometasonef. (441336)onNR-AR
+Negative Examples
+(d)-Terpinene(7461)onNR-PPAR- 
+(e)Bemegride (2310) on NR-AR
+ (f)Arecoline (2230) on NR-PPAR- 
+Figure 16: Attention Visualization on Tox21 . The top three molecules are highest conﬁdence positive
+examples for the 30B model; the bottom three are the highest conﬁdence negatives. We match attention
+weightsfromtheSMILESwiththecanonicalatomordering. Danazolandgestodeneareknowntopossess
+high aﬃnities for the androgen receptor (AR) (Nieschlag et al., 2010).
+We present results in Table 15. Performance scales with model size. The scaling is slower than tasks like QA,
+andthebasemodellagsaspecialistmodelwithexplicit3Dinformationand10timesmoremolecules (Zhou
+et al., 2022). We suspect the weak supervision setup is harder for this task, and ﬁne-tuning and/or more
+molecule data is required to get suﬃcient task signal. The model is available for work on this.
+MoleculeNet Classiﬁcation
+Model Modality Molecules BACE BBBP ClinTox HIV SIDER Tox21 Av.
+GAL 125M SMILES 2M 0.561 0.393 0.518 0.702 0.559 0.543 0.581
+GAL 1.3B SMILES 2M 0.576 0.604 0.589 0.724 0.540 0.606 0.619
+GAL 6.7B SMILES 2M 0.584 0.535 0.784 0.722 0.559 0.639 0.640
+GAL 30B SMILES 2M 0.727 0.596 0.822 0.759 0.613 0.685 0.687
+GAL 120B SMILES 2M 0.617 0.661 0.826 0.745 0.632 0.689 0.690
+Uni-Mol 3D 20M 0.857 0.729 0.919 0.808 0.659 0.796 0.770
+Table 15: Results on MoleculeNet Classiﬁcation . Results are scored by ROC-AUC.
+For our purposes, the implication for future work is that we can learn drug discovery tasks via natural
+language prompts. If we can learn these relationships automatically in a signal-dense document context (e.g.
+online chemical databases), this might reduce the reliance on supervised datasets to perform these tasks.
+As a ﬁnal check, we can average Galactica’s attention heads across layers, and visualize whereabouts the
+model looks in the SMILES sequence to make a prediction (atomic attention). We show an example in
+Figure 16 for some Tox21 predictions.
+23Galactica: A Large Language Model for Science
+Figure17: PrimaryStructure Prediction . For three of the validation sets we observe smooth scaling, reﬂect-
+ingthepotentialforhighsequencesimilaritywithsequencesinthetrainingset;forexample,orthologsinthe
+case of the Paenvalidation set. The CASP set with sequencesimilarity constraints levels oﬀ, suggesting the
+gains from the 550k proteins in training quickly saturates for more out-of-domain sequences.
+5.7 Biological Understanding
+InthissectionweexamineGalactica’scapabilitytointerfacewithbiologicalmodalities. Languagemodels
+could potentially play a role in automatic organisation of this data, for example annotating newly sequenced
+proteins with functional information. We explore the potential of this interface in this section.
+For protein sequences from UniProt, we include a small subset of available sequences in pre-training. Speciﬁ-
+cally, we take reviewed Swiss-Prot proteins; a high-quality subset ( 0:5million) of total ( 227million). This is
+to ensure the model is not overly biased towards learning natural sequences over natural language. As with
+molecule data, this is a constraint we can relax in future work, enabling for much larger corpus. Here we
+focuson the ﬁrst stepof investigating whether asingle modelcan learn eﬀectively in themulti-modal setting.
+We ﬁnd that a language model can learn an implicit measure of sequence similarity that it can use for tasks
+such as functional annotation and descriptions.
+5.7.1 Sequence Validation Perplexity
+While Galactica does not explicitly model the 3D structure of a protein, the information needed for a speciﬁc
+conformationiscontainedinthelinearaminoacidsequence,whichinturndeterminefunction. Asaﬁrst
+step,wetestupstreamperformancethroughevaluatingproteinsequenceperplexity. Constructingagood
+validation set is important and data leakage is a problem for works in this ﬁeld. We construct four holdout
+sets to obtain more conﬁdence about what is being learnt and what generalizes.
+First, we conduct BLAST on the sequences in the training set and remove all sequences with a sequence
+identity50%with51 CASP14 targetsequences. Theseare thesame test sequencesused inESMFold (Lin
+etal.,2022b). Intotalweremove167sequencesfromthetrainingsetusingthisapproach. Wecallthisthis
+holdout set CASPSimilarSeq . We call the 51 CASP14 target sequences CASPSeq .
+Secondly, we conduct organism-level holdout, and remove all sequences from the Paenungulata clade of
+organisms,includingelephants,elephantshrews,manateesandaadvarks. Thisallowsustotestwhether
+Galacticacanannotatesequecesfororganismsithasneverseenbefore. Intotalweremove109sequences
+24Galactica: A Large Language Model for Science
+from the training set using this approach. We call this holdout set PaenSeq . Note that this does not enforce
+any sequence similarity constraints, and there may be very similar sequences in the training set.
+Lastly, we conduct a randomized test split, consisting of 5456 sequences. There is no sequence identity
+constraint applied, so memorizationmaybe more at play, but it still provides asignal about the breadthof
+sequence knowledge absorbed by the model. We call this holdout set UniProtSeq .
+WeevaluateperplexityforallholdoutsetsinTable16andplotinFigure17. Forthreeofthevalidationsetswe
+observe smooth scaling, reﬂectingthe potential for high sequence similarity withsequences in the training
+set;forexample,orthologsinthecaseofthePaenvalidationset. Interestingly,theCASPsetwithsequence
+similarity constraints levels oﬀ, suggesting the gains from the 550k proteins in training quickly saturates.
+Protein Sequence Validation Perplexity
+Model Param (bn) CASPSeq CASPSimSeq PaenSeq UniProtSeq
+GAL 125M 0.1 20.62 19.18 16.35 19.05
+GAL 1.3B 1.3 17.58 17.04 12.53 15.82
+GAL 6.7B 6.7 17.29 16.35 7.76 11.58
+GAL 30B 30 17.27 15.42 4.28 8.23
+GAL 120B 120 17.26 12.77 3.14 5.54
+Table 16: ProteinValidation Perplexity . Validation sets with higher potential sequence similarity with the
+training set have lower perplexity than the restricted sets (CASP validation sets).
+To investigate further, we example validation perplexity on the CASPSeq set during training of the 120B
+model, and we plot results in Figure 18 below.
+Figure 18: CASPSeq Validation During Training . Overﬁtting occurs before the end of training, but the
+eﬀectisnotdrastic,andrepeatingtheproteinsequencesthreetimesdoesnotdamageperformanceonthis
+task. The ﬁnal 120B model is the second-last point, reﬂecting the early stopping we applied (see earlier
+Sections)
+We observe falling validation perplexity up until the start of the fourth epoch, at which point the model
+overﬁts for this particular dataset. This may suggest Galactica is getting worse at more "out-of-domain"
+proteins that diﬀer signiﬁcantly fromthe test set. For futurework, less repetition is probably desirable; and
+more generally, increasing the diversity of proteins in the training dataset is likely to be beneﬁcial.
+25Galactica: A Large Language Model for Science
+Figure 19: Protein Keyword Prediction . Thistest’sGalactica’scapabilitytopredictproteinkeywords,e.g.
+"cytoplasm", from the sequence alone. For the Paen and General datasets, this capability improves smoothly
+withscale. ItscalesmoreslowlyandbeginstosaturatefortheCASPSimSeqset,reﬂectingthelowersequence
+similarity with sequences in the training set.
+5.7.2 Functional Keyword Prediction
+We now look at speciﬁc translation capabilities from protein sequence toward natural language, which may
+be useful for tasks such as protein annotation. As a ﬁrst test, we look at UniProt keywords that Galactica can
+infer from the sequence. An example of these is shown in Figure 20 overleaf.
+We report results in Table 17. F1score increases across the holdout sets with scale, suggesting that Galactica
+can learn keywords by inferring from the sequence. However, we see saturation for the CASPSimSeq,
+suggesting this capability depends on how similar the sequences are to those in the training set. This is
+reﬂected in the example in Figure 20, where Galactica uses its knowledge of a similar proteins from diﬀerent
+organisms, with a maximum sequence similarity of 91.8% in the training set, to help annotate.
+Protein Keyword Prediction
+Model Param (bn) CASPSimSeq PaenSeq UniProtSeq
+GAL 125M 0.1 10.5% 9.3% 15.2%
+GAL 1.3B 1.3 17.4% 26.0% 21.9%
+GAL 6.7B 6.7 18.4% 33.3% 25.1%
+GAL 30B 30 22.0% 42.6% 40.8%
+GAL 120B 120 21.9% 54.5% 48.7%
+Table17: ProteinKeywordPrediction . Metricshownis F1score. Performanceincreaseswithscaleacross
+theholdoutsets. NotewedonotincludeCASPSeqasthesedonothaveUniProtkeywordswecantestagainst.
+We attempted to visualize attention in the protein sequence, but we did not observe anything with biological
+intepretation(e.g. attentionto domains). Our workinghypothesisis that Galacticahas learnt animplicit
+measure of sequence similarity that it uses to associate predicted keywords, but that this is not directly inter-
+pretable from where it attends to. This diﬀers from our chemistry analysis where results were interpretable
+in terms of attention to the underlying atomic structure.
+26Galactica: A Large Language Model for Science
+## Sequence
+Here is the sequence:
+[START_AMINO]MQKSPLERASVISKLFFSWPGPILRKGYRQHLKLSDIYQIPSVDSADNLSEKLERE...[END_AMINO]
+### Ground-Truth Keywords
+ATP-binding,Cellmembrane,Chloride,Chloridechannel,Endoplasmicreticulum,Endosome,Glycoprotein,
+Ionchannel, Iontransport, Isomerase,Isopeptide bond,Lipoprotein, Membrane,Nucleotide-binding,Nucleus,
+Palmitate, Phosphoprotein, Reference proteome, Repeat, Transmembrane, Transmembrane helix, Transport, Ubl
+conjugation
+### Galactica 30B Predicted Keywords
+ATP-binding,Cellmembrane,Chloride,Chloridechannel,Endoplasmicreticulum,Endosome,Glycoprotein,
+Ionchannel, Iontransport, Isomerase,Isopeptide bond,Lipoprotein, Membrane,Nucleotide-binding,Nucleus,
+Palmitate, Phosphoprotein, Reference proteome, Repeat, Transmembrane, Transmembrane helix, Transport, Ubl
+conjugation
+Figure 20: Protein Keyword Prediction . Example shown is Q108U0 from the PaenSeq holdout, a cystic
+ﬁbrosistransmembraneconductanceregulatorfromtheAfricanelephant. Theclosestproteinbysequence
+similarityinthetrainingsetistheQ2QLA3protein,acysticﬁbrosistransmembraneconductanceregular
+from a horse, with 91.8% sequence similarity.
+5.7.3 Protein Function Description
+As the next test, we look at generating free-form descriptions of protein function from the sequence. We look
+at the UniProt function descriptions and compare to Galactica generated descriptions.
+We report results in Table 18. ROUGE-L score increases smoothly across all the holdout sets. We show
+anexampleoverleafinFigure21fromPaenSeq. TheproteinisaCytochromebproteinfromarockhyrax
+(Q7Y8J5). The closest sequence by similarity in the training set is a Cytochrome b protein from a pygmy
+hippopotamus (O03363) with 83% sequence similarity. In this case we get a perfect prediction from the
+description.
+Protein Function Prediction
+Model Param (bn) CASPSimSeq PaenSeq UniProtSeq
+GAL 125M 0.1 0.062 0.073 0.061
+GAL 1.3B 1.3 0.069 0.084 0.079
+GAL 6.7B 6.7 0.109 0.137 0.111
+GAL 30B 30 0.137 0.196 0.186
+GAL 120B 120 0.252 0.272 0.252
+Table 18: Protein Function Prediction . Metric shown is ROUGE-L. Performance increases with scale.
+Aswiththekeywordpredictiontask,Galacticaappearstobelearningbasedonmatchingsequenceswith
+similar ones it has seen in training, and using this to form a description. This suggests language models
+for protein sequences could serve as useful alternatives to existing search methods such as BLAST and
+MMseqs2 (Altschul et al., 1990; Steinegger and Söding, 2017).
+6 Toxicity and Bias
+In this section we study thetoxicity and bias of the Galactica model. We evaluate on benchmarks related to
+stereotypes,toxicity,andmisinformation. Wecompareresultstootherlanguagemodels. WeﬁndGalacticais
+signiﬁcantly less biased and toxic than existing language models.
+27Galactica: A Large Language Model for Science
+This is the sequence:
+[START_AMINO]MTNIRKNHPLLKTINDAFIDLPTPSNISTWWNFGSLLGACLIIQVLTGLFLAMHYTSDT...[END_AMINO]
+### Ground-Truth Description
+Component of the ubiquinol-cytochrome c reductase complex (complex III or cytochrome b-c1 complex) that is
+part of the mitochondrial respiratory chain. The b-c1 complex mediates electron transfer from ubiquinol to
+cytochromec. Contributestothegenerationofaprotongradientacrossthemitochondrialmembranethatisthen
+used for ATP synthesis.
+### Galactica 120B Predicted Description
+Componentoftheubiquinol-cytochromecreductasecomplex(complexIIIorcytochromeb-c1complex)that
+ispartofthemitochondrialrespiratorychain. Theb-c1complexmediateselectrontransferfromubiquinolto
+cytochromec. Contributestothegenerationofaprotongradientacrossthemitochondrialmembranethatisthen
+used for ATP synthesis.
+Figure 21: Protein Description Prediction . Example shown is Q7Y8J5 from the PaenSeq holdout, a Cy-
+tochromebproteinfromarockhyrax. Theclosestproteinbysequencesimilarityinthetrainingsetisthe
+O03363 protein, a Cytochrome b protein from a pygmy hippopotamus, with 83% sequence similarity.
+6.1 Bias and Stereotypes
+For the following evaluations, we investigate Galactica’s ability to detect (and generate) harmful stereotypes
+and hate speech, using four widely used benchmarks.
+6.1.1 CrowS-Pairs
+CrowS-Pairs
+Bias type text-davinci-002 OPT 175B Galactica 120B
+Race 64.7 68.6 59.9
+Socioeconomic 73.8 76.2 65.7
+Gender 62.6 65.7 51.9
+Disability 76.7 76.7 66.7
+Nationality 61.6 62.9 51.6
+Sexual-orientation 76.2 78.6 77.4
+Physical-appearance 74.6 76.2 58.7
+Religion 73.3 68.6 67.6
+Age 64.4 67.8 69.0
+Overall 67.2 69.5 60.5
+Table19: CrowS-PairsResults . Galacticademonstratessigniﬁcantlylowerstereotypicalbiasinallcategories
+with the exception of sexual orientation and age.
+CrowS-Pairs is a collection of 1,508 crowd-sourced pairs of sentences, one which is "more" stereotyping and
+onewhichis"less"stereotyping,andcoversninecharacteristics (Nangiaetal.,2020). Thesecharacteristicsare
+race, religion, socioeconomic status, age, disability, nationality, sexual orientation, physical appearance, and
+gender. Alanguagemodel’spreferenceforstereotypicalcontentismeasuredbycomputingtheproportionof
+examples in which the "more" stereotypical sentence is preferred (as determined by log likelihood). Higher
+scores indicate a more harmfully biased model, whereas an ideal model with no bias would score 50%.
+We report results for Galactica and other language models in Table 19. Galactica exhibits signiﬁcantly lower
+stereotypicalbiasesinmostcategories,withtheexceptionofsexualorientationandage,whencompared
+to the latest GPT-3 ( text-davinci-002 ) and OPT 175B. Galactica attains a better overall score of 60.5%
+compared to the other models. Language models such as OPT use the Pushshift.io Reddit corpus as a
+primarydatasource, whichlikelyleads the modeltolearnmorediscriminatoryassociations (Zhangetal.,
+28Galactica: A Large Language Model for Science
+2022). Galactica is trained on a scientiﬁc corpus where the incidence rate for stereotypes and discriminatory
+text is likely to be lower.
+6.1.2 StereoSet
+StereoSet
+Category text-davinci-002 OPT 175B Galactica 120B
+LMS (") 78.4 74.1 75.2
+Prof. SS ( #) 63.4 62.6 57.2
+ICAT (") 57.5 55.4 64.3
+LMS (") 75.6 74.0 74.6
+Gend. SS ( #) 66.5 63.6 59.1
+ICAT (") 50.6 53.8 61.0
+LMS (") 80.8 84.0 81.4
+Reli. SS ( #) 59.0 59.0 55.1
+ICAT (") 66.3 68.9 73.1
+LMS (") 77.0 74.9 74.5
+Race SS ( #) 57.4 56.8 54.8
+ICAT (") 65.7 64.8 67.3
+LMS (") 77.6 74.8 75.0
+Overall SS ( #) 60.8 59.9 56.2
+ICAT (") 60.8 60.0 65.6
+Table 20: StereoSet Results . Galactica outperforms all models across all categories on the ICAT score.
+StereoSetaimstomeasurestereotypicalbiasesacrossprofession,religion,gender,andrace(Nadeemetal.,
+2021). Thebenchmarkcontainstwotasks: anintrasentencetaskandanintersentencetask,witharound2,100
+examples each in the development set.
+•Intrasentence Task : the stereotype and associated context are in the same sentence.
+•Intersentence Task : the context and stereotype are in diﬀerent (consecutive) sentences.
+Alongsidestereo-andanti-stereotypicalvariantsofsentences,eachexampleinStereoSetcontainsanunrelated
+sentence. This sentence is included for measuring a Language Modelling Score (LMS) and a Stereotype
+Score(SS).ThesetwometricsarecombinedtoformtheIdealizedContextAssociationTestscore(ICAT),
+whichis a balancedmeasure ofbias detectionand languagemodeling. Anideal, unbiasedlanguage model
+would score an LMS of 100, an SS of 50, and an ICAT of 100.
+WereportresultsinTable20. GalacticaoutperformsothermodelsonallcategoriesfortheoverallICATscore.
+6.1.3 Toxicity
+TomeasuretoxicityweusetheRealToxicityPrompts(RTP)benchmarkintroducedinGehmanetal.(2020).
+We follow the same setup of Zhang et al. (2022) and sample 25 generations of 20 tokens using nucleus
+sampling (p=0.9)foreachof5000randomlysampledpromptsfromRTP.Weusethepromptstoproduce
+sequences (i.e, continuations) which are then scored by a toxicity classiﬁer provided by Perspective API5.
+Figure 22 plots the results. The chart shows the mean toxicity probability of continuations (y-axis), stratiﬁed
+across bucketed toxicities of the original prompts (x-axis). Galactica exhibits substantially lower toxicity
+rates than the other models.
+6.2 TruthfulQA
+TruthfulQAisabenchmarkthatmeasuresanswertruthfulnessoflanguagemodelgenerations(Linetal.,
+2022a). It comprises 817 questions that span health, law, ﬁnance and other categories. We compare to other
+published language models. We report results in Table 21. Galactica exceeds the performance of other
+5https://github.com/conversationai/perspectiveapi
+29Galactica: A Large Language Model for Science
+Figure 22: Toxicity rate on RealToxicityPrompts . Galactica exhibits much lower toxicity continuation rates,
+even as we increase the original prompt toxicity.
+languagemodelsonthisbenchmark. However,absoluteperformanceisstilllow. Giventhecuratednatureof
+our corpus, this suggests that data alone does not cause language models to struggle at this task.
+TruthfulQA
+Model MC1 (Acc) MC1 (Std)
+OPT 175B 21% 0.13
+BLOOM 176B 19% 0.07
+GAL 125M 19% 0.11
+GAL 1.3B 19% 0.15
+GAL 6.7B 19% 0.03
+GAL 30B 24% 0.05
+GAL 120B 26% 0.02
+Table 21: TruthfulQA Results . Galactica exhibits superior performance to other language models, and
+performance increases with scale. but slowly and at low levels.
+7 Limitations and Future Work
+7.1 Limitations
+We cover some of the limitations with work in this section.
+CorpusLimitations Ourcorpushasseverallimitations,bothexternalandinternallyimposed. Themain
+external constraint is our restriction to use open-access resources, and much of scientiﬁc knowledge like
+papers and textbooks are not open access. With access to these closed sources of knowledge, performance is
+likelytobeconsiderablyhigher. Wealsouseself-imposedconstraints,likerestrictingthenumberofmolecules
+andproteinsforthiswork;withouttheseconstraints,wearelikelytoseeconsiderableperformancegains
+due to much larger corpuses for these modalities.
+30Galactica: A Large Language Model for Science
+Corpus Eﬀects vs Prompt Eﬀects In several benchmarks, we show performance gains over existing lan-
+guage models,but we donot speciﬁcally disentanglethe eﬀects of theprompts weincluded in pre-training
+versusthecorescientiﬁccorpus. Infuturework,welikelyneedtodisentangletheseeﬀectsinordertosee
+whether general language capabilities are possible with a scientiﬁc corpus alone without prompt boosting.
+Citation Bias Whilewedemonstratethatthemodelapproachesthetruecitationdistributionwithscale,
+some bias towards popular papers still remains with the 120B scale model, so the model likely requires
+augmentation before being used in a production environment.
+Prompt Pre-Training vs Instruction Tuning Weoptedfortheformerinthispaper,butideallywewould
+needtoexplorewhatthelattercouldachieve,alongthelinesoftherecentworkofChungetal.(2022). A
+limitation of this work is that we do not perform this direct comparison through ablations, making clear the
+trade-oﬀs between approaches.
+GeneralKnowledge WhileGalacticaabsorbsbroadsocietalknowledgethroughsourcessuchasWikipedia
+-e.g. 120BknowsKotaKinabaluisthecapitalofMalaysia’sSabahstate-wewouldnotadviseusingitfor
+tasks that require this type of knowledge as this is not the intended use-case.
+Text as a Modality While we have shown text-based Transformers are surprisingly powerful with text
+representationsof scientiﬁcphenomena,we cautionagainst the interpretationthattext isallyou need. For
+example, in chemistry, geometry is a fundamental language that determines meaning, yet Galactica has no
+notion of geometry; e.g. 3D co-ordinates of atoms.
+7.2 Future Work
+For development of the base model, we highlight several directions that may be worth pursuing.
+NewObjectiveFunction Itislikelyfurthergainscanbeobtainedwithmixture-of-denoisingtrainingas
+U-PaLM hasrecentlyshown (Tayetal.,2022b; Chungetal., 2022). Wesuspect thismightbebeneﬁcial for
+the scientiﬁc modalities such as protein sequences, where the left-to-right LM objective is quite limiting.
+LargerContextWindow Weuseamaximumcontextwindowlengthof 2048tokensinthiswork. Extending
+this is likely to be beneﬁcial for understanding in long-form scientiﬁc documents, such as textbooks and also
+documents with longer modality sequences (e.g. long protein sequences).
+Extending to Images We cannot capture scientiﬁc knowledge adequately without capturing images. This
+is a natural follow-up project, although it likely requires some architectural modiﬁcation to make it work
+well. Existing work such as Alayrac et al. (2022) has shown how to extend LLMs with this modality.
+More <work> examples Wefeel <work>couldbeageneral-purposereasoningtokenandwewouldlike
+toinvest moreinthis direction,includingincreasing promptdiversityand exploringperformanceon more
+benchmarks.
+Veriﬁcation Even as language models become more accurate with scale, we need assurances that their
+generationsarecorrect andfactual. Developingthis layer iscriticalforproduction applicationsoflanguage
+models in general beyond scientiﬁc applications.
+ContinualLearning Should we re-train from scratch to incorporate new scientiﬁc knowledge or train from
+oldercheckpoints? Thisisanopenquestion,andfurtherresearchisneededtoﬁndthebestprocedurefor
+incorporating new knowledge into the model.
+Retrieval Augmentation While we have shown how large language models can absorb large bodies of
+scientiﬁcknowledge,retrievalhasaplaceforﬁne-grainedtypesofknowledge,andwebelievethisisastrong
+direction to pursue to complement the ﬂexible weight memory of the Transformer.
+31Galactica: A Large Language Model for Science
+8 Discussion and Conclusion
+For over half a century, the dominant way of accessing scientiﬁc knowledge has been through a store-
+and-retrieve paradigm. The limitation of this approach is the reasoning, combining and organization of
+informationstillreliesonhumaneﬀort. Thishasledtoasigniﬁcantknowledgethroughputbottleneck. In
+this work we explored how language models might disrupt this paradigm and bring about a new interface
+for humanity to interface with knowledge.
+We showed that language modelsare surprisingly strong absorbersof technical knowledge, such as LaTeX
+equations and chemical reactions, and these capabilities tend to scale smoothly with model size. The context-
+associativepoweroflanguagemodelslikelyconferssigniﬁcantadvantagesoversearchenginesinthelong-run.
+We demonstrated this for citation prediction, where a language model outperforms tuned sparse and dense
+retrievalpipelinesforthistask. Languagemodelswilllikelyprovideavaluablenewtoolforexploringthe
+literature and the body of scientiﬁc knowledge in coming years.
+We also demonstrated that language models can compose a curated knowledge base to perform well in
+knowledge-intensivequestionansweringtasks. Thisincludescomposingknowledgeinastep-by-stepreason-
+ingmanner. Weshowedthatwithaworkingmemorytokenapproach,wecanachievestrongperformance
+over existing methods on mathematical MMLU and MATH benchmarks. We suspect tasks like MATH are in
+principle solvable with language model approaches. The current bottleneck is the availability of high quality
+step-by-stepdatasets. However,languagemodelswillnotperformthesetaskslikehumansuntiltheyhave
+an architectural change that supports adaptive computation.
+We also performed initial investigations on the potential of LLMs to act as a bridge between scientiﬁc
+modalities and natural language. We showed Galactica could learn tasks like IUPAC naming through
+self-supervision. WealsoshowedthatitispossibletoformulatedrugdiscoverytaskslikeMoleculeNetin
+a natural language prompt and achieve strong results without direct ﬁne-tuning. Lastly, we showed the
+potential for tasks such as automatic protein annotation. In all, increasing the number (and size) of datasets
+that bridge between natural language and natural sequences is likely to boost performance further.
+Takentogether,wefeelthereisastrongpotentialforlanguagemodelstotakeonknowledgetasksthatare
+currently human specialisms. We open source the models so others can build on our work, and we look
+forward to seeing how the open machine learning community will extend it.
+Acknowledgments
+Thanks to to Susan Zhang, Stephen Roller, Naman Goyal and others for their support in using metaseq. We
+build on the open LLM training foundation they made possible with the OPT project (Zhang et al., 2022).
+ThankstoIliyanZarov,LukasBlecher,JianXiangKuanandMikhailPershinfortheircontributionstothe
+project.
+Thanks to Faisal Azhar and Joe Spisak for their valuable support in delivering this project.
+Thanks to Antonine Bordes, Laurens van der Maaten and Joelle Pineau for leadership support, and belief in
+this project. Additional thanks to Laurens for his valuable feedback on the paper.
+Thanks to Geeta Chauhan, Hamid Shojanazeri and Eric Han for help with faster inference.
+Thankstonumerousothersforcommentsandadviceoverthepastyear: PatrickLewis,PontusStenetorp,
+Timo Schick, Sebastian Riedel, Soumith Chintala.
+Thanks to the open source creators whose libraries, datasets and other tools we utilized. Your eﬀorts
+accelerated our eﬀorts; and we open source our model to accelerate yours.
+Thanks to the GPU nodes that didn’t die on us when training the 120B model.
+References
+Jean-Baptiste Alayrac, Jeﬀ Donahue, Pauline Luc, Antoine Miech, Iain Barr, Yana Hasson, Karel Lenc, Arthur
+Mensch, Katie Millican, Malcolm Reynolds, Roman Ring, Eliza Rutherford, Serkan Cabi, Tengda Han,
+ZhitaoGong,SinaSamangooei,MarianneMonteiro,JacobMenick,SebastianBorgeaud,AndrewBrock,
+Aida Nematzadeh, Sahand Sharifzadeh, Mikolaj Binkowski, Ricardo Barreira, Oriol Vinyals, Andrew
+32Galactica: A Large Language Model for Science
+Zisserman,andKarenSimonyan. Flamingo: avisuallanguagemodelforfew-shotlearning,2022. URL
+https://arxiv.org/abs/2204.14198 .
+S FAltschul, WGish, W Miller,E W Myers,and D JLipman. Basiclocal alignmentsearch tool. J. Mol.Biol. ,
+215(3):403–410, October 1990.
+VamsiAribandi,YiTay,TalSchuster,JinfengRao,HuaixiuStevenZheng,SanketVaibhavMehta,Honglei
+Zhuang,VinhQ.Tran,DaraBahri,JianmoNi,JaiGupta,KaiHui,SebastianRuder,andDonaldMetzler.Ext5:
+Towardsextrememulti-taskscalingfortransferlearning,2021. URL https://arxiv.org/abs/2111.10952 .
+arXiv. arXiv Monthly Submissions, 2022. URL https://arxiv.org/stats/monthly_submissions .
+Andrea Banino, Jan Balaguer, and Charles Blundell. Pondernet: Learning to ponder. CoRR, abs/2107.05407,
+2021. URL https://arxiv.org/abs/2107.05407 .
+Iz Beltagy, Arman Cohan, and Kyle Lo. Scibert: Pretrained contextualized embeddings for scientiﬁc text.
+CoRR, abs/1903.10676, 2019. URL http://arxiv.org/abs/1903.10676 .
+SidBlack,StellaBiderman,EricHallahan,QuentinAnthony,LeoGao,LaurenceGolding,HoraceHe,Connor
+Leahy, Kyle McDonell, Jason Phang, Michael Pieler, USVSN Sai Prashanth, Shivanshu Purohit, Laria
+Reynolds, Jonathan Tow, Ben Wang, and Samuel Weinbach. Gpt-neox-20b: An open-source autoregressive
+language model, 2022. URL https://arxiv.org/abs/2204.06745 .
+Su Lin Blodgett, Solon Barocas, Hal Daumé III, and Hanna M. Wallach. Language (technology) is power: A
+critical surveyof "bias" in NLP. CoRR, abs/2005.14050, 2020. URL https://arxiv.org/abs/2005.14050 .
+Sebastian Borgeaud, Arthur Mensch, Jordan Hoﬀmann, Trevor Cai, Eliza Rutherford, Katie Millican, George
+van den Driessche, Jean-Baptiste Lespiau, Bogdan Damoc, Aidan Clark, Diego de Las Casas, Aurelia Guy,
+Jacob Menick, Roman Ring, Tom Hennigan, Saﬀron Huang, Loren Maggiore, Chris Jones, Albin Cassirer,
+Andy Brock, Michela Paganini, Geoﬀrey Irving, Oriol Vinyals, Simon Osindero, Karen Simonyan, Jack W.
+Rae, Erich Elsen, and Laurent Sifre. Improving language models by retrieving from trillions of tokens,
+2021. URL https://arxiv.org/abs/2112.04426 .
+Lutz Bornmann and Rüdiger Mutz. Growth rates of modern science: A bibliometric analysis. CoRR,
+abs/1402.4578, 2014. URL http://arxiv.org/abs/1402.4578 .
+François-XavierBriol,ChrisOates,MarkGirolami,andMichaelAOsborne. Frank-wolfebayesianquadrature:
+Probabilistic integration with theoretical guarantees. Advances in Neural Information Processing Systems , 28,
+2015.
+Tom B. Brown, Benjamin Mann, Nick Ryder, Melanie Subbiah, Jared Kaplan, Prafulla Dhariwal, Arvind Nee-
+lakantan, Pranav Shyam, Girish Sastry, Amanda Askell, Sandhini Agarwal, Ariel Herbert-Voss, Gretchen
+Krueger,TomHenighan,RewonChild,AdityaRamesh,DanielM.Ziegler,JeﬀreyWu,ClemensWinter,
+ChristopherHesse,MarkChen,EricSigler,MateuszLitwin,ScottGray,BenjaminChess,JackClark,Christo-
+pher Berner, Sam McCandlish, Alec Radford, Ilya Sutskever, and Dario Amodei. Language models are
+few-shot learners. CoRR, abs/2005.14165, 2020. URL https://arxiv.org/abs/2005.14165 .
+Vannevar Bush. As We May Think. Atlantic Monthly 176 (July 1945) , pages 101–108, 1945.
+Isabel Cachola, Kyle Lo, Arman Cohan, and Daniel S. Weld. TLDR: extreme summarization of scientiﬁc
+documents. CoRR, abs/2004.15011, 2020. URL https://arxiv.org/abs/2004.15011 .
+Aakanksha Chowdhery, Sharan Narang, Jacob Devlin, Maarten Bosma, Gaurav Mishra, Adam Roberts,
+Paul Barham, Hyung Won Chung, Charles Sutton, Sebastian Gehrmann, Parker Schuh, Kensen Shi, Sasha
+Tsvyashchenko, Joshua Maynez, Abhishek Rao, Parker Barnes, Yi Tay, Noam Shazeer, Vinodkumar Prab-
+hakaran, Emily Reif, Nan Du, Ben Hutchinson, Reiner Pope, James Bradbury, Jacob Austin, Michael Isard,
+Guy Gur-Ari, Pengcheng Yin, Toju Duke, Anselm Levskaya, Sanjay Ghemawat, Sunipa Dev, Henryk
+Michalewski,XavierGarcia,VedantMisra,KevinRobinson,LiamFedus,DennyZhou,DaphneIppolito,
+DavidLuan, HyeontaekLim,BarretZoph, AlexanderSpiridonov,RyanSepassi, DavidDohan, Shivani
+Agrawal, Mark Omernick, Andrew M. Dai, Thanumalayan Sankaranarayana Pillai, Marie Pellat, Aitor
+Lewkowycz,EricaMoreira,RewonChild,OleksandrPolozov,KatherineLee,ZongweiZhou,XuezhiWang,
+Brennan Saeta, Mark Diaz, Orhan Firat, MicheleCatasta, Jason Wei, KathyMeier-Hellstern, Douglas Eck,
+Jeﬀ Dean, Slav Petrov, and Noah Fiedel. Palm: Scaling language modeling with pathways, 2022. URL
+https://arxiv.org/abs/2204.02311 .
+Hyung Won Chung, Le Hou, Shayne Longpre, Barret Zoph, Yi Tay, William Fedus, Eric Li, Xuezhi Wang,
+MostafaDehghani,SiddharthaBrahma,AlbertWebson,ShixiangShaneGu,ZhuyunDai,MiracSuzgun,
+Xinyun Chen, Aakanksha Chowdhery, Sharan Narang, Gaurav Mishra, Adams Yu, Vincent Zhao, Yanping
+Huang, Andrew Dai, Hongkun Yu, Slav Petrov, Ed H. Chi, Jeﬀ Dean, Jacob Devlin, Adam Roberts, Denny
+33Galactica: A Large Language Model for Science
+Zhou, Quoc V. Le, and Jason Wei. Scaling instruction-ﬁnetuned language models, 2022. URL https:
+//arxiv.org/abs/2210.11416 .
+ChristopherClark,KentonLee,Ming-WeiChang,TomKwiatkowski,MichaelCollins,andKristinaToutanova.
+Boolq: Exploring the surprising diﬃcultyof natural yes/no questions. CoRR, abs/1905.10044, 2019. URL
+http://arxiv.org/abs/1905.10044 .
+Karl Cobbe, Vineet Kosaraju, Mohammad Bavarian, Jacob Hilton, Reiichiro Nakano, Christopher Hesse,
+andJohnSchulman. Trainingveriﬁerstosolvemathwordproblems. CoRR,abs/2110.14168,2021. URL
+https://arxiv.org/abs/2110.14168 .
+Pradeep Dasigi, Nelson F. Liu, Ana Marasović, Noah A. Smith, and Matt Gardner. Quoref: A reading
+comprehension dataset with questions requiring coreferential reasoning. In EMNLP, 2019.
+Pradeep Dasigi, Kyle Lo, Iz Beltagy, Arman Cohan, Noah A. Smith, and Matt Gardner. A dataset of
+information-seeking questions and answers anchored in research papers. In NAACL, 2021.
+Sunipa Dev, Tao Li, Jeﬀ M. Phillips, and Vivek Srikumar. On measuring and mitigating biased inferences of
+word embeddings. CoRR, abs/1908.09369, 2019. URL http://arxiv.org/abs/1908.09369 .
+EmilyDinan,StephenRoller,KurtShuster,AngelaFan,MichaelAuli,andJasonWeston. Wizardofwikipedia:
+Knowledge-powered conversational agents, 2018. URL https://arxiv.org/abs/1811.01241 .
+HenriA.FavreandWarrenH.Powerll. Nomenclatureoforganicchemistry: Iupacrecommendationsand
+preferred names 2013.
+Galileo Galilei. Assayer. 1623.
+Luyu Gao, Zhuyun Dai, Panupong Pasupat, Anthony Chen, Arun Tejasvi Chaganty, Yicheng Fan, Vincent Y.
+Zhao, Ni Lao, Hongrae Lee, Da-Cheng Juan, and Kelvin Guu. Attributed text generation via post-hoc
+research and revision, 2022. URL https://arxiv.org/abs/2210.08726 .
+MiguelGarcía-Ortegón,GregorN.C.Simm,AustinJ.Tripp,JoséMiguelHernández-Lobato,AndreasBender,
+andSergioBacallado. Dockstring: Easymoleculardockingyieldsbetterbenchmarksforliganddesign.
+Journalof ChemicalInformationand Modeling ,62(15):3486–3502, 2022. doi: 10.1021/acs.jcim.1c01334. URL
+https://doi.org/10.1021/acs.jcim.1c01334 . PMID: 35849793.
+SamuelGehman,SuchinGururangan,MaartenSap,YejinChoi,andNoahA.Smith. Realtoxicityprompts:
+Evaluating neural toxic degeneration in language models. ArXiv, abs/2009.11462, 2020.
+GenBank. GenBank and WGS Statistics, 2022. URL https://www.ncbi.nlm.nih.gov/genbank/statistics .
+Alex Graves. Adaptive computation time for recurrent neural networks, 2016. URL https://arxiv.org/
+abs/1603.08983 .
+GROBID. Grobid. https://github.com/kermitt2/grobid , 2008–2022.
+Yu Gu, Robert Tinn, Hao Cheng, Michael Lucas, Naoto Usuyama, Xiaodong Liu, Tristan Naumann, Jianfeng
+Gao,andHoifungPoon. Domain-speciﬁclanguagemodelpretrainingforbiomedicalnaturallanguage
+processing. CoRR, abs/2007.15779, 2020. URL https://arxiv.org/abs/2007.15779 .
+ChulakaGunasekara,JonathanK.Kummerfeld,LazarosPolymenakos,andWalterLasecki. DSTC7task1:
+Noeticend-to-endresponseselection. In ProceedingsoftheFirstWorkshoponNLPforConversationalAI ,pages
+60–67,Florence,Italy,August2019.AssociationforComputationalLinguistics. doi: 10.18653/v1/W19-4107.
+URL https://aclanthology.org/W19-4107 .
+Dan Hendrycks and Kevin Gimpel. Gaussian error linear units (gelus), 2016. URL https://arxiv.org/
+abs/1606.08415 .
+Dan Hendrycks, Collin Burns, Steven Basart, Andy Zou, Mantas Mazeika, Dawn Song, and Jacob Steinhardt.
+Measuring massive multitask language understanding, 2020. URL https://arxiv.org/abs/2009.03300 .
+DanHendrycks,CollinBurns,SauravKadavath,AkulArora,StevenBasart,EricTang,DawnSong,andJacob
+Steinhardt. Measuring mathematical problem solving with the MATH dataset. CoRR, abs/2103.03874,
+2021. URL https://arxiv.org/abs/2103.03874 .
+Danny Hernandez, Tom Brown, Tom Conerly, Nova DasSarma, Dawn Drain, Sheer El-Showk, Nelson Elhage,
+Zac Hatﬁeld-Dodds, Tom Henighan, Tristan Hume, Scott Johnston, Ben Mann, Chris Olah, Catherine Ols-
+son,DarioAmodei,NicholasJoseph,JaredKaplan,andSamMcCandlish. Scalinglawsandinterpretability
+of learning from repeated data, 2022. URL https://arxiv.org/abs/2205.10487 .
+Winfred B. Hirschmann. Proﬁt from the Learning Curve, January 1964.
+34Galactica: A Large Language Model for Science
+JordanHoﬀmann,SebastianBorgeaud,ArthurMensch,ElenaBuchatskaya, TrevorCai, ElizaRutherford,
+DiegodeLasCasas,LisaAnneHendricks,JohannesWelbl,AidanClark,TomHennigan,EricNoland,Katie
+Millican,GeorgevandenDriessche,BogdanDamoc,AureliaGuy,SimonOsindero,KarenSimonyan,Erich
+Elsen,JackW.Rae,OriolVinyals,andLaurentSifre. Trainingcompute-optimallargelanguagemodels,
+2022. URL https://arxiv.org/abs/2203.15556 .
+ShionHonda,ShoiShi,andHirokiR.Ueda. Smilestransformer: Pre-trainedmolecularﬁngerprintforlow
+data drug discovery. 2019.
+ZhiHong,AswathyAjith,GregoryPauloski,EamonDuede,CarlMalamud,RogerMagoulas,KyleChard,
+and Ian Foster. Scholarbert: Bigger is not always better, 2022. URL https://arxiv.org/abs/2205.11342 .
+Ross Irwin, Spyridon Dimitriadis, JiazhenHe, andEsben Bjerrum. Chemformer: A pre-trained transformer
+for computational chemistry. ChemRxiv , 2021. doi: 10.26434/chemrxiv-2021-v2pnn.
+GautierIzacard,MathildeCaron,LucasHosseini,SebastianRiedel,PiotrBojanowski,ArmandJoulin,and
+Edouard Grave. Towards unsupervised dense information retrieval with contrastive learning. CoRR,
+abs/2112.09118, 2021. URL https://arxiv.org/abs/2112.09118 .
+Gautier Izacard, Patrick Lewis, Maria Lomeli, Lucas Hosseini, Fabio Petroni, Timo Schick, Jane Dwivedi-
+Yu,ArmandJoulin,SebastianRiedel,andEdouardGrave. Few-shotlearningwithretrievalaugmented
+language models, 2022.
+Peter Jackson. Introduction to Expert Systems . Addison-Wesley Longman Publishing Co., Inc., USA, 2nd
+edition, 1990. ISBN 0201175789.
+QiaoJin,BhuwanDhingra,ZhengpingLiu,WilliamW.Cohen,andXinghuaLu. Pubmedqa: Adatasetfor
+biomedicalresearchquestionanswering. CoRR,abs/1909.06146,2019. URL http://arxiv.org/abs/1909.
+06146.
+Jeﬀ Johnson, Matthijs Douze, and Hervé Jégou. Billion-scale similarity search with GPUs. IEEE Transactions
+on Big Data , 7(3):535–547, 2019.
+Armand Joulin, Edouard Grave, Piotr Bojanowski, and Tomas Mikolov. Bag of tricks for eﬃcient text
+classiﬁcation. arXiv preprint arXiv:1607.01759 , 2016.
+JohnJumper,RichardEvans,AlexanderPritzel,TimGreen,MichaelFigurnov,OlafRonneberger,Kathryn
+Tunyasuvunakool, Russ Bates, Augustin Žídek, Anna Potapenko, Alex Bridgland, Clemens Meyer, Simon
+A A Kohl, Andrew J Ballard, Andrew Cowie, Bernardino Romera-Paredes, Stanislav Nikolov, Rishub Jain,
+JonasAdler,TrevorBack,StigPetersen,DavidReiman,EllenClancy,MichalZielinski,MartinSteinegger,
+MichalinaPacholska,TamasBerghammer,SebastianBodenstein,DavidSilver,OriolVinyals,AndrewW
+Senior, Koray Kavukcuoglu, Pushmeet Kohli, and Demis Hassabis. Highly accurate protein structure
+prediction with AlphaFold. Nature, 596(7873):583–589, 2021. doi: 10.1038/s41586-021-03819-2.
+JaredKaplan,SamMcCandlish,TomHenighan,TomB.Brown,BenjaminChess,RewonChild,ScottGray,Alec
+Radford, Jeﬀrey Wu, and Dario Amodei. Scaling laws for neural language models. CoRR, abs/2001.08361,
+2020. URL https://arxiv.org/abs/2001.08361 .
+Aniruddha Kembhavi, Minjoon Seo, Dustin Schwenk, Jonghyun Choi, Ali Farhadi, and Hannaneh Hajishirzi.
+Areyousmarterthanasixthgrader? textbookquestionansweringformultimodalmachinecomprehension.
+2017 IEEE Conference on Computer Vision and Pattern Recognition (CVPR) , pages 5376–5384, 2017.
+DanielKhashabi,SewonMin, TusharKhot,AshishSabharwal,OyvindTafjord,PeterClark, andHannaneh
+Hajishirzi. Uniﬁedqa: Crossing format boundaries witha single qa system, 2020. URL https://arxiv.
+org/abs/2005.00700 .
+Tushar Khot, Ashish Sabharwal, and Peter Clark. Scitail: A textual entailment dataset from science question
+answering. In AAAI, 2018.
+Tushar Khot, Peter Clark, Michal Guerquin, Peter Alexander Jansen, and Ashish Sabharwal. Qasc: A dataset
+for question answering via sentence composition. ArXiv, abs/1910.11473, 2020.
+J.-D.Kim,T.Ohta,Y.Tsuruoka,Y.Tateisi,andN.Collier. Introductiontothebio-entityrecognitiontaskat
+jnlpba.International Joint Workshop on Natural Language Processing in Biomedicine and its Applications , 2004.
+Takeshi Kojima, Shixiang Shane Gu, Machel Reid, Yutaka Matsuo, and Yusuke Iwasawa. Large language
+models are zero-shot reasoners, 2022. URL https://arxiv.org/abs/2205.11916 .
+Martin Krallinger, Obdulia Rabal, Florian Leitner, David Salgado Miguel Vazquez, Zhiyong Lu, Robert
+Leaman,DonghongJiandDanielMLoweandRogerASayleandRizaTheresaBatista-NavarroYananLu,
+Rafal Rak, Torsten Huber, Tim Rocktäschel, Sérgio Matos andDavid Campos, Buzhou Tang, Hua Xu,
+35Galactica: A Large Language Model for Science
+TsendsurenMunkhdalai,KeunHoRyu,SVRamanan,SenthilNathan,SlavkoŽitnik,MarkoBajec,Lutz
+Weber,MatthiasIrmer,SaberAAkhondi,JanAKors,ShuoXu,XinAn,UtpalKumarSikdar,AsifEkbal,
+Thaer M Dieb Masaharu Yoshioka, Miji Choi, Karin Verspoor, Madian Khabsa, C Lee Giles, Hongfang
+Liu, Komandur Elayavilli Ravikumar, Francisco M Couto Andre Lamurias, Hong-Jie Dai, Richard Tzong-
+HanTsai,CaglarAta,TolgaCan,AnabelUsié,RuiAlves,IsabelSegura-Bedmar,PalomaMartínez,Julen
+Oyarzabal, and Alfonso Valencia. The chemdner corpus of chemicals and drugs and its annotation
+principles. J Cheminform , 2004.
+Lev Krasnov, Ivan Khokhlov, Maxim V. Fedorov, and Sergey Sosnin. Transformer-based artiﬁcial neural
+networksfortheconversionbetweenchemicalnotations, 2021. URL https://jcheminf.biomedcentral.
+com/articles/10.1186/s13321-021-00512-4 .
+KeitaKurita,NidhiVyas,AyushPareek,AlanW.Black,andYuliaTsvetkov. Measuringbiasincontextualized
+word representations. CoRR, abs/1906.07337, 2019. URL http://arxiv.org/abs/1906.07337 .
+Katherine Lee, Daphne Ippolito, Andrew Nystrom, Chiyuan Zhang, Douglas Eck, Chris Callison-Burch, and
+Nicholas Carlini. Deduplicating training data makes language models better. In Proceedings of the 60th
+AnnualMeetingoftheAssociationforComputationalLinguistics .AssociationforComputationalLinguistics,
+2022.
+PatrickLewis,MyleOtt,JingfeiDu,andVeselinStoyanov.Pretrainedlanguagemodelsforbiomedicalandclini-
+caltasks: Understandingandextendingthestate-of-the-art. In Proceedingsofthe3rdClinicalNaturalLanguage
+ProcessingWorkshop ,pages146–157,Online,November2020a.AssociationforComputationalLinguistics.
+doi: 10.18653/v1/2020.clinicalnlp-1.17. URL https://aclanthology.org/2020.clinicalnlp-1.17 .
+Patrick Lewis, Ethan Perez, Aleksandra Piktus, Fabio Petroni, Vladimir Karpukhin, Naman Goyal, Hein-
+rich Küttler, Mike Lewis, Wen-tau Yih, Tim Rocktäschel, Sebastian Riedel, and Douwe Kiela. Retrieval-
+augmented generation for knowledge-intensive nlp tasks, 2020b. URL https://arxiv.org/abs/2005.
+11401.
+Aitor Lewkowycz, AndersAndreassen, David Dohan, Ethan Dyer, Henryk Michalewski, Vinay Ramasesh,
+Ambrose Slone, Cem Anil, Imanol Schlag, Theo Gutman-Solo, Yuhuai Wu, Behnam Neyshabur, Guy
+Gur-Ari,andVedantMisra. Solvingquantitativereasoningproblemswithlanguagemodels,2022. URL
+https://arxiv.org/abs/2206.14858 .
+Jiao Li, Yueping Sun, Robin J Johnson, Daniela Sciaky, Chih-Hsuan Wei, Robert Leaman, Allan Peter Davis,
+Carolyn JMattingly, ThomasC Wiegers, andZhiyong Lu. BioCreativeV CDR taskcorpus: aresource for
+chemical disease relation extraction. Database (Oxford) , 2016:baw068, May 2016.
+J.R. Licklider. Man-Computer Symbiosis. IRE Transactions on Human Factors in Electronics, HFE-1 , pages 4–11,
+1960.
+KevinLin,OyvindTafjord,PeterClark,andMattGardner. Reasoningoverparagrapheﬀectsinsituations.
+ArXiv, abs/1908.05852, 2019.
+StephanieLin,JacobHilton,andOwainEvans. TruthfulQA:Measuringhowmodelsmimichumanfalsehoods.
+InProceedings of the 60th Annual Meeting of the Association for Computational Linguistics (Volume 1: Long
+Papers), pages 3214–3252, Dublin, Ireland, May 2022a. Association for Computational Linguistics. doi:
+10.18653/v1/2022.acl-long.229. URL https://aclanthology.org/2022.acl-long.229 .
+ZemingLin,HalilAkin,RoshanRao,BrianHie,ZhongkaiZhu,WentingLu,AllandosSantosCosta,Maryam
+Fazel-Zarandi, Tom Sercu, Sal Candido, and Alexander Rives. Language models of protein sequences at
+the scale of evolution enable accurate structure prediction. bioRxiv, 2022b. doi: 10.1101/2022.07.20.500902.
+URL https://www.biorxiv.org/content/early/2022/07/21/2022.07.20.500902 .
+KyleLo,LucyLuWang,MarkNeumann,RodneyKinney,andDanielS.Weld. GORC:Alargecontextual
+citation graph of academic papers. CoRR, abs/1911.02782, 2019a. URL http://arxiv.org/abs/1911.
+02782.
+KyleLo,LucyLuWang,MarkNeumann,RodneyKinney,andDanielS.Weld. GORC:Alargecontextual
+citation graph of academic papers. CoRR, abs/1911.02782, 2019b. URL http://arxiv.org/abs/1911.
+02782.
+Ilya Loshchilov and Frank Hutter. Fixing weight decay regularization in adam. CoRR, abs/1711.05101, 2017.
+URL http://arxiv.org/abs/1711.05101 .
+DanielM.Lowe,PeterT.Corbett,PeterMurray-Rust,andRobertC.Glen. Chemicalnametostructure: Opsin,
+an open source solution, 2011. URL https://pubs.acs.org/doi/full/10.1021/ci100384d .
+36Galactica: A Large Language Model for Science
+Vivien Marx. The big challenges of big data. Nature, 498:255–260, 2013. URL https://www.nature.com/
+articles/498255a .
+FrankJ.Massey. Thekolmogorov-smirnovtestforgoodnessofﬁt. JournaloftheAmericanStatisticalAssocia-
+tion, 46(253):68–78, mar 1951. doi: 10.1080/01621459.1951.10500769. URL https://doi.org/10.1080%
+2F01621459.1951.10500769 .
+Todor Mihaylov, Peter Clark, Tushar Khot, and Ashish Sabharwal. Can a suit of armor conduct electricity? a
+new dataset for open book question answering. In EMNLP, 2018.
+EricMitchell, CharlesLin, AntoineBosselut, ChristopherD. Manning, and ChelseaFinn. Memory-based
+model editing at scale, 2022. URL https://arxiv.org/abs/2206.06520 .
+MoinNadeem,AnnaBethke,andSivaReddy. StereoSet: Measuringstereotypicalbiasinpretrainedlanguage
+models. In Proceedings of the 59th Annual Meeting of the Association for Computational Linguistics and the
+11th International Joint Conference on Natural Language Processing (Volume 1: Long Papers) , pages 5356–5371,
+Online, August 2021. Association for Computational Linguistics. doi: 10.18653/v1/2021.acl-long.416. URL
+https://aclanthology.org/2021.acl-long.416 .
+Nikita Nangia, Clara Vania, Rasika Bhalerao, and Samuel R. Bowman. CrowS-pairs: A challenge dataset
+for measuring social biases in masked language models. In Proceedings of the 2020 Conference on Empirical
+MethodsinNaturalLanguageProcessing(EMNLP) ,pages1953–1967,Online,November2020.Associationfor
+ComputationalLinguistics. doi: 10.18653/v1/2020.emnlp-main.154. URL https://aclanthology.org/
+2020.emnlp-main.154 .
+AnastasiosNentidis,GeorgiosKatsimpras,EiriniVandorou,AnastasiaKrithara,LuisGascó,MartinKrallinger,
+andGeorgiosPaliouras. Overviewofbioasq2021: Theninthbioasqchallengeonlarge-scalebiomedical
+semantic indexing and question answering. CoRR, abs/2106.14885, 2021. URL https://arxiv.org/abs/
+2106.14885 .
+E Nieschlag, HM Behre, and S Nieschlag. Andrology: Male reproductive health and dysfunction, 2010.
+Erik Nijkamp, Jeﬀrey Ruﬀolo, Eli N. Weinstein, Nikhil Naik, and Ali Madani. Progen2: Exploring the
+boundaries of protein language models, 2022. URL https://arxiv.org/abs/2206.13517 .
+EvangelosPaﬁlis,SunePFrankild,LuciaFanini,SarahFaulwetter,ChristinaPavloudi,AikateriniVasileiadou,
+Christos Arvanitidis, and Lars Juhl Jensen. The species and organisms resources for fast and accurate
+identiﬁcation of taxonomic names in text. PloS one, 8(6), 2013.
+AnkitPal,LogeshKumarUmapathi,andMalaikannanSankarasubbu. Medmcqa: Alarge-scalemulti-subject
+multi-choice dataset for medical domain question answering. 2022. doi: 10.48550/ARXIV.2203.14371. URL
+https://arxiv.org/abs/2203.14371 .
+F. Petroni, T. Rocktäschel, A.H. Miller, P. Lewis, A. Bakhtin, Y. Wu, and S. Riedel. Language models as
+knowledge bases? In Proceedings of the 2019 Conference on Empirical Methods in Natural Language Processing
+(EMNLP), 2019 , 2019.
+Oﬁr Press, Noah A. Smith, and Mike Lewis. Train short, test long: Attention with linear biases enables input
+length extrapolation. CoRR, abs/2108.12409, 2021. URL https://arxiv.org/abs/2108.12409 .
+Jack W. Rae, Sebastian Borgeaud, Trevor Cai, Katie Millican, Jordan Hoﬀmann, H. Francis Song, John
+Aslanides, Sarah Henderson, Roman Ring, Susannah Young, Eliza Rutherford, Tom Hennigan, Jacob
+Menick, Albin Cassirer, Richard Powell, George van den Driessche, Lisa Anne Hendricks, Maribeth Rauh,
+Po-SenHuang,AmeliaGlaese,JohannesWelbl,SumanthDathathri,SaﬀronHuang, JonathanUesato,John
+Mellor,IrinaHiggins,AntoniaCreswell,NatMcAleese,AmyWu,ErichElsen,SiddhantM.Jayakumar,
+ElenaBuchatskaya,DavidBudden,EsmeSutherland, KarenSimonyan,MichelaPaganini,LaurentSifre,
+LenaMartens,XiangLorraineLi,AdhigunaKuncoro,AidaNematzadeh,ElenaGribovskaya,Domenic
+Donato, Angeliki Lazaridou, Arthur Mensch, Jean-Baptiste Lespiau, Maria Tsimpoukelli, Nikolai Grigorev,
+Doug Fritz, Thibault Sottiaux, Mantas Pajarskas, Toby Pohlen, Zhitao Gong, Daniel Toyama, Cyprien
+de Masson d’Autume, Yujia Li, Tayfun Terzi, Vladimir Mikulik, Igor Babuschkin, Aidan Clark, Diego
+de Las Casas, Aurelia Guy, Chris Jones, James Bradbury, Matthew Johnson, Blake A. Hechtman, Laura
+Weidinger,IasonGabriel,WilliamS.Isaac,EdwardLockhart,SimonOsindero,LauraRimell,ChrisDyer,
+Oriol Vinyals, Kareem Ayoub, Jeﬀ Stanway, Lorrayne Bennett, Demis Hassabis, Koray Kavukcuoglu, and
+Geoﬀrey Irving. Scaling language models: Methods, analysis & insights from training gopher. CoRR,
+abs/2112.11446, 2021. URL https://arxiv.org/abs/2112.11446 .
+ColinRaﬀel,NoamShazeer,AdamRoberts,KatherineLee,SharanNarang,MichaelMatena,YanqiZhou,Wei
+Li, and Peter J. Liu. Exploring the limits of transfer learning with a uniﬁed text-to-text transformer. Journal
+of Machine Learning Research , 21(140):1–67, 2020. URL http://jmlr.org/papers/v21/20-074.html .
+37Galactica: A Large Language Model for Science
+K Rajan, A Zielesny, and C. Steinbeck. Stout: Smiles to iupac names using neural machine translation, 2021.
+URL https://jcheminf.biomedcentral.com/articles/10.1186/s13321-021-00512-4 .
+Bharath Ramsundar, Peter Eastman, Patrick Walters, Vijay Pande, Karl Leswing, and Zhenqin
+Wu.Deep Learning for the Life Sciences . O’Reilly Media, 2019. https://www.amazon.com/
+Deep-Learning-Life-Sciences-Microscopy/dp/1492039837 .
+YasamanRazeghi,RobertL.Logan,MattGardner,andSameerSingh. Impactofpretrainingtermfrequencies
+on few-shot reasoning, 2022. URL https://arxiv.org/abs/2202.07206 .
+AlexanderRives,JoshuaMeier,TomSercu,SiddharthGoyal,ZemingLin,JasonLiu,DemiGuo,MyleOtt,
+C. Lawrence Zitnick, Jerry Ma, and Rob Fergus. Biological structure and function emerge from scaling
+unsupervised learning to 250 million protein sequences. Proceedings of the National Academy of Sciences , 118
+(15):e2016239118, 2021. doi: 10.1073/pnas.2016239118. URL https://www.pnas.org/doi/abs/10.1073/
+pnas.2016239118 .
+Jerret Ross, Brian Belgodere, Vijil Chenthamarakshan, Inkit Padhi, Youssef Mroueh, and Payel Das. Do large
+scalemolecularlanguagerepresentationscaptureimportantstructuralinformation? CoRR,abs/2106.09553,
+2021. URL https://arxiv.org/abs/2106.09553 .
+VictorSanh,AlbertWebson,ColinRaﬀel,StephenH.Bach,LintangSutawika,ZaidAlyafeai,AntoineChaﬃn,
+Arnaud Stiegler, Teven Le Scao, Arun Raja, Manan Dey, M Saiful Bari, Canwen Xu, Urmish Thakker,
+Shanya Sharma Sharma, Eliza Szczechla, Taewoon Kim, Gunjan Chhablani, Nihal Nayak, Debajyoti Datta,
+Jonathan Chang, Mike Tian-Jian Jiang, Han Wang, Matteo Manica, Sheng Shen, Zheng Xin Yong, Harshit
+Pandey, Rachel Bawden, Thomas Wang, Trishala Neeraj, Jos Rozen, Abheesht Sharma, Andrea Santilli,
+Thibault Fevry, Jason Alan Fries, Ryan Teehan, Tali Bers, Stella Biderman, Leo Gao, Thomas Wolf, and
+Alexander M. Rush. Multitask prompted training enables zero-shot task generalization, 2021. URL
+https://arxiv.org/abs/2110.08207 .
+Thomas Scialom,TuhinChakrabarty, andSmaranda Muresan. Continual-t0: Progressivelyinstructing 50+
+tasks to language models without forgetting, 2022. URL https://arxiv.org/abs/2205.12393 .
+RicoSennrich,BarryHaddow,andAlexandraBirch. Neuralmachinetranslationofrarewordswithsubword
+units.CoRR, abs/1508.07909, 2015. URL http://arxiv.org/abs/1508.07909 .
+Emily Sheng, Kai-Wei Chang, Premkumar Natarajan, and Nanyun Peng. The woman worked as a babysitter:
+Onbiasesinlanguagegeneration. CoRR,abs/1909.01326,2019. URL http://arxiv.org/abs/1909.01326 .
+Emily Sheng, Kai-Wei Chang, Premkumar Natarajan, and Nanyun Peng. Societal biases in language genera-
+tion: Progress and challenges. CoRR, abs/2105.04054, 2021. URL https://arxiv.org/abs/2105.04054 .
+Hoo-ChangShin,YangZhang,EvelinaBakhturina,RaulPuri,MostofaPatwary,MohammadShoeybi,and
+Raghav Mani. Biomegatron: Larger biomedical domain language model. CoRR, abs/2010.06060, 2020.
+URL https://arxiv.org/abs/2010.06060 .
+LarrySmith,LorraineKTanabe,RieJohnsonneeAndo,Cheng-JuKuo,I-FangChung,Chun-NanHsu,Yu-Shi
+Lin,RomanKlinger,ChristophMFriedrich,KuzmanGanchev,ManabuTorii,HongfangLiu,BarryHaddow,
+Craig A Struble, Richard J Povinelli, Andreas Vlachos, William A Baumgartner Jr, Lawrence Hunter, Bob
+Carpenter, Richard Tzong-Han Tsai, Hong-Jie Dai, Feng Liu, Yifei Chen, Chengjie Sun, Sophia Katrenko,
+PieterAdriaans,ChristianBlaschke,RafaelTorres,MarianaNeves,PreslavNakov,AnnaDivoli,Manuel
+Maña-López, Jacinto Mata, and W John Wilbur. Overview of biocreative ii gene mention recognition.
+Genome Biology , 9, 2008.
+Aarohi Srivastava, Abhinav Rastogi, Abhishek Rao, Abu Awal Md Shoeb, Abubakar Abid, Adam Fisch,
+AdamR.Brown,AdamSantoro,AdityaGupta,AdriàGarriga-Alonso,AgnieszkaKluska,AitorLewkowycz,
+AkshatAgarwal,AletheaPower,AlexRay,AlexWarstadt,AlexanderW.Kocurek,AliSafaya,AliTazarv,
+Alice Xiang, Alicia Parrish, Allen Nie, Aman Hussain, Amanda Askell, Amanda Dsouza, Ambrose Slone,
+AmeetRahane,AnantharamanS.Iyer,AndersAndreassen,AndreaMadotto,AndreaSantilli,Andreas
+Stuhlmüller, Andrew Dai, Andrew La, Andrew Lampinen, Andy Zou, Angela Jiang, Angelica Chen, Anh
+Vuong,AnimeshGupta,AnnaGottardi,AntonioNorelli,AnuVenkatesh,ArashGholamidavoodi,Arfa
+Tabassum, Arul Menezes, Arun Kirubarajan, Asher Mullokandov, Ashish Sabharwal, Austin Herrick,
+Avia Efrat, Aykut Erdem, Ayla Karakaş, B. Ryan Roberts, Bao Sheng Loe, Barret Zoph, Bartłomiej Bo-
+janowski,BatuhanÖzyurt,BehnamHedayatnia,BehnamNeyshabur,BenjaminInden,BennoStein,Berk
+Ekmekci, Bill Yuchen Lin, Blake Howald, Cameron Diao, Cameron Dour, Catherine Stinson, Cedrick
+Argueta, César Ferri Ramírez, Chandan Singh, Charles Rathkopf, Chenlin Meng, Chitta Baral, Chiyu Wu,
+ChrisCallison-Burch,ChrisWaites,ChristianVoigt,ChristopherD.Manning,ChristopherPotts,Cindy
+Ramirez, Clara E. Rivera, Clemencia Siro, Colin Raﬀel, Courtney Ashcraft, Cristina Garbacea, Damien
+38Galactica: A Large Language Model for Science
+Sileo,DanGarrette,DanHendrycks,DanKilman,DanRoth,DanielFreeman,DanielKhashabi,Daniel
+Levy, Daniel Moseguí González, Danielle Perszyk, Danny Hernandez, Danqi Chen, Daphne Ippolito,
+DarGilboa,DavidDohan,DavidDrakard,DavidJurgens,DebajyotiDatta,DeepGanguli,DenisEmelin,
+Denis Kleyko, Deniz Yuret, Derek Chen, Derek Tam, Dieuwke Hupkes, Diganta Misra, Dilyar Buzan,
+DimitriCoelhoMollo,DiyiYang,Dong-HoLee,EkaterinaShutova,EkinDogusCubuk,EladSegal,Eleanor
+Hagerman, Elizabeth Barnes, Elizabeth Donoway, Ellie Pavlick, Emanuele Rodola, Emma Lam, Eric Chu,
+Eric Tang, Erkut Erdem, Ernie Chang, Ethan A. Chi, Ethan Dyer, Ethan Jerzak, Ethan Kim, Eunice Engefu
+Manyasi,EvgeniiZheltonozhskii,FanyueXia,FatemehSiar,FernandoMartínez-Plumed,FrancescaHappé,
+Francois Chollet, Frieda Rong, Gaurav Mishra, Genta Indra Winata, Gerard de Melo, Germán Kruszewski,
+Giambattista Parascandolo, Giorgio Mariani, Gloria Wang, Gonzalo Jaimovitch-López, Gregor Betz, Guy
+Gur-Ari,HanaGalijasevic,HannahKim, HannahRashkin,Hannaneh Hajishirzi,Harsh Mehta,Hayden
+Bogar,HenryShevlin,HinrichSchütze,HiromuYakura,HongmingZhang,HughMeeWong,IanNg,Isaac
+Noble,JaapJumelet,JackGeissinger,JacksonKernion,JacobHilton,JaehoonLee,JaimeFernándezFisac,
+JamesB.Simon,JamesKoppel,JamesZheng,JamesZou,JanKocoń,JanaThompson,JaredKaplan,Jarema
+Radom, Jascha Sohl-Dickstein, Jason Phang, Jason Wei, Jason Yosinski, Jekaterina Novikova, Jelle Bosscher,
+Jennifer Marsh, Jeremy Kim, Jeroen Taal, Jesse Engel, JesujobaAlabi, JiachengXu, JiamingSong, Jillian
+Tang,JoanWaweru,JohnBurden,JohnMiller,JohnU.Balis,JonathanBerant,JörgFrohberg,JosRozen,
+JoseHernandez-Orallo,JosephBoudeman,JosephJones,JoshuaB.Tenenbaum,JoshuaS.Rule,JoyceChua,
+Kamil Kanclerz, Karen Livescu, Karl Krauth, Karthik Gopalakrishnan, Katerina Ignatyeva, Katja Markert,
+Kaustubh D. Dhole, Kevin Gimpel, Kevin Omondi, Kory Mathewson, Kristen Chiafullo, Ksenia Shkaruta,
+Kumar Shridhar, Kyle McDonell, Kyle Richardson, Laria Reynolds, Leo Gao, Li Zhang, Liam Dugan,
+Lianhui Qin, Lidia Contreras-Ochando, Louis-Philippe Morency, Luca Moschella, Lucas Lam, Lucy Noble,
+LudwigSchmidt,LuhengHe,LuisOliverosColón,LukeMetz,LütﬁKeremŞenel,MaartenBosma,Maarten
+Sap,MaartjeterHoeve,MaheenFarooqi,ManaalFaruqui,MantasMazeika,MarcoBaturan,MarcoMarelli,
+Marco Maru, Maria Jose Ramírez Quintana, Marie Tolkiehn, Mario Giulianelli, Martha Lewis, Martin
+Potthast, Matthew L. Leavitt, Matthias Hagen, Mátyás Schubert, Medina Orduna Baitemirova, Melody
+Arnaud,MelvinMcElrath,MichaelA.Yee,MichaelCohen,MichaelGu,MichaelIvanitskiy,MichaelStarritt,
+Michael Strube, Michał Swędrowski, Michele Bevilacqua, Michihiro Yasunaga, Mihir Kale, Mike Cain,
+Mimee Xu, Mirac Suzgun, Mo Tiwari, Mohit Bansal, Moin Aminnaseri, Mor Geva, Mozhdeh Gheini,
+MukundVarmaT,NanyunPeng,NathanChi,NayeonLee,NetaGur-AriKrakover,NicholasCameron,
+Nicholas Roberts, Nick Doiron, Nikita Nangia, Niklas Deckers, Niklas Muennighoﬀ, Nitish Shirish Keskar,
+Niveditha S. Iyer, Noah Constant, Noah Fiedel, Nuan Wen, Oliver Zhang, Omar Agha, Omar Elbaghdadi,
+Omer Levy, Owain Evans, Pablo Antonio Moreno Casares, Parth Doshi, Pascale Fung, Paul Pu Liang,
+PaulVicol,PegahAlipoormolabashi,PeiyuanLiao,PercyLiang,PeterChang,PeterEckersley,PhuMon
+Htut, Pinyu Hwang, Piotr Miłkowski, Piyush Patil, Pouya Pezeshkpour, Priti Oli, Qiaozhu Mei, Qing Lyu,
+QinlangChen,RabinBanjade,RachelEttaRudolph,RaeferGabriel,RahelHabacker,RamónRiscoDelgado,
+RaphaëlMillière,RhythmGarg,RichardBarnes,RifA.Saurous,RikuArakawa,RobbeRaymaekers,Robert
+Frank, Rohan Sikand, Roman Novak, Roman Sitelew, Ronan LeBras, Rosanne Liu, Rowan Jacobs, Rui
+Zhang,RuslanSalakhutdinov,RyanChi,RyanLee,RyanStovall,RyanTeehan,RylanYang,SahibSingh,
+SaifM. Mohammad, SajantAnand, SamDillavou, SamShleifer, SamWiseman, Samuel Gruetter, SamuelR.
+Bowman,SamuelS.Schoenholz,SanghyunHan,SanjeevKwatra,SarahA.Rous,SarikGhazarian,Sayan
+Ghosh,SeanCasey,SebastianBischoﬀ,SebastianGehrmann,SebastianSchuster,SepidehSadeghi,Shadi
+Hamdan,SharonZhou,ShashankSrivastava,SherryShi,ShikharSingh,ShimaAsaadi,ShixiangShaneGu,
+Shubh Pachchigar, Shubham Toshniwal, Shyam Upadhyay, Debnath Shyamolima, Siamak Shakeri, Simon
+Thormeyer, Simone Melzi, Siva Reddy, Sneha Priscilla Makini, Soo-Hwan Lee, Spencer Torene, Sriharsha
+Hatwar, Stanislas Dehaene, Stefan Divic, Stefano Ermon, Stella Biderman, Stephanie Lin, Stephen Prasad,
+StevenT.Piantadosi,StuartM.Shieber,SummerMisherghi,SvetlanaKiritchenko,SwaroopMishra,Tal
+Linzen,TalSchuster,TaoLi,TaoYu,TariqAli,TatsuHashimoto,Te-LinWu,ThéoDesbordes,Theodore
+Rothschild, Thomas Phan, Tianle Wang, Tiberius Nkinyili, Timo Schick, Timofei Kornev, Timothy Telleen-
+Lawton,TitusTunduny,TobiasGerstenberg,TrentonChang,TrishalaNeeraj,TusharKhot,TylerShultz,
+Uri Shaham, Vedant Misra, Vera Demberg, Victoria Nyamai, Vikas Raunak, Vinay Ramasesh, Vinay Uday
+Prabhu, Vishakh Padmakumar, Vivek Srikumar, William Fedus, William Saunders, William Zhang, Wout
+Vossen, Xiang Ren, Xiaoyu Tong, Xinran Zhao, Xinyi Wu, Xudong Shen, Yadollah Yaghoobzadeh, Yair
+Lakretz, Yangqiu Song, Yasaman Bahri, Yejin Choi, Yichi Yang, Yiding Hao, Yifu Chen, Yonatan Belinkov,
+YuHou,YufangHou,YuntaoBai,ZacharySeid,ZhuoyeZhao,ZijianWang,ZijieJ.Wang,ZiruiWang,and
+Ziyi Wu. Beyond the imitation game: Quantifying and extrapolating the capabilities of language models,
+2022. URL https://arxiv.org/abs/2206.04615 .
+Martin Steinegger and Johannes Söding. MMseqs2 enables sensitive protein sequence searching for the
+analysis of massive data sets. Nature Biotechnology , 35(11):1026–1028, October 2017. doi: 10.1038/nbt.3988.
+39Galactica: A Large Language Model for Science
+URL https://doi.org/10.1038/nbt.3988 .
+MiracSuzgun,NathanScales,NathanaelSchärli,SebastianGehrmann,YiTay,HyungWonChung,Aakanksha
+Chowdhery,QuocV.Le,EdH.Chi,DennyZhou,andJasonWei. Challengingbig-benchtasksandwhether
+chain-of-thought can solve them, 2022. URL https://arxiv.org/abs/2210.09261 .
+Olivier Taboureau, Sonny Kim Nielsen, Karine Audouze, Nils Weinhold, Daniel Edsgärd, Francisco S Roque,
+Irene Kouskoumvekaki, Alina Bora, Ramona Curpan, Thomas Skøt Jensen, Søren Brunak, and Tudor I
+Oprea. ChemProt: adiseasechemicalbiologydatabase. NucleicAcidsRes. ,39(Databaseissue):D367–72,
+January 2011.
+AlonTalmor,JonathanHerzig,NicholasLourie,andJonathanBerant.Commonsenseqa: Aquestionanswering
+challenge targeting commonsense knowledge. CoRR, abs/1811.00937, 2018. URL http://arxiv.org/abs/
+1811.00937 .
+YiTay,MostafaDehghani,SamiraAbnar,HyungWonChung,WilliamFedus,JinfengRao,SharanNarang,
+Vinh Q. Tran, Dani Yogatama, and Donald Metzler. Scaling laws vs model architectures: How does
+inductive bias inﬂuence scaling?, 2022a. URL https://arxiv.org/abs/2207.10551 .
+Yi Tay, Jason Wei, Hyung Won Chung, Vinh Q. Tran, David R. So, Siamak Shakeri, Xavier Garcia,
+HuaixiuStevenZheng,JinfengRao,AakankshaChowdhery,DennyZhou,DonaldMetzler,SlavPetrov,
+Neil Houlsby, Quoc V. Le, and Mostafa Dehghani. Transcending scaling laws with 0.12022b. URL
+https://arxiv.org/abs/2210.11399 .
+Romal Thoppilan, Daniel De Freitas, Jamie Hall, Noam Shazeer, Apoorv Kulshreshtha, Heng-Tze Cheng,
+Alicia Jin, Taylor Bos, Leslie Baker, Yu Du, YaGuang Li, Hongrae Lee, Huaixiu Steven Zheng, Amin
+Ghafouri,MarceloMenegali, YanpingHuang,MaximKrikun, DmitryLepikhin,JamesQin, DehaoChen,
+YuanzhongXu, ZhifengChen,AdamRoberts, MaartenBosma,Vincent Zhao,YanqiZhou, Chung-Ching
+Chang, Igor Krivokon, Will Rusch, Marc Pickett, Pranesh Srinivasan, Laichee Man, Kathleen Meier-
+Hellstern,MeredithRingelMorris,TulseeDoshi,RenelitoDelosSantos,TojuDuke,JohnnySoraker,Ben
+Zevenbergen,VinodkumarPrabhakaran,MarkDiaz,BenHutchinson,KristenOlson,AlejandraMolina,
+Erin Hoﬀman-John, Josh Lee, Lora Aroyo, Ravi Rajakumar, Alena Butryna, Matthew Lamm, Viktoriya
+Kuzmina, Joe Fenton, Aaron Cohen, Rachel Bernstein, Ray Kurzweil, Blaise Aguera-Arcas, Claire Cui,
+Marian Croak, Ed Chi, and Quoc Le. Lamda: Language models for dialog applications, 2022. URL
+https://arxiv.org/abs/2201.08239 .
+VenkteshV,MukeshK.Mohania,andVikramGoyal.Tagrec: Automatedtaggingofquestionswithhierarchical
+learning taxonomy. CoRR, abs/2107.10649, 2021. URL https://arxiv.org/abs/2107.10649 .
+Ashish Vaswani, Noam Shazeer, Niki Parmar, Jakob Uszkoreit, Llion Jones, Aidan N. Gomez, Lukasz Kaiser,
+andIlliaPolosukhin. Attentionisallyouneed. CoRR,abs/1706.03762,2017. URL http://arxiv.org/abs/
+1706.03762 .
+Jason Wei, Maarten Bosma, Vincent Y. Zhao, Kelvin Guu, Adams Wei Yu, Brian Lester, Nan Du, Andrew M.
+Dai, and Quoc V. Le. Finetuned language models are zero-shot learners, 2021. URL https://arxiv.org/
+abs/2109.01652 .
+Jason Wei, Xuezhi Wang, Dale Schuurmans, Maarten Bosma, Brian Ichter, Fei Xia, Ed Chi, Quoc Le, and
+DennyZhou. Chainofthoughtpromptingelicitsreasoninginlargelanguagemodels,2022. URL https:
+//arxiv.org/abs/2201.11903 .
+David Weininger. Smiles, a chemical language and information system. 1. introduction to methodology
+and encoding rules. Journal of Chemical Information and Computer Sciences , 28(1):31–36, 1988. doi: 10.1021/
+ci00057a005. URL https://doi.org/10.1021/ci00057a005 .
+Johannes Welbl, Nelson F. Liu, and Matt Gardner. Crowdsourcing multiple choice science questions. ArXiv,
+abs/1707.06209, 2017.
+John Wheeler. Information, physics, quantum: The search for links. Zurek, W.H., Ed., Complexity, Entropy, and
+the Physics of Information , 1990.
+Eugene Wigner. The unreasonable eﬀectiveness ofmathematics in the naturalsciences. Communications on
+Pure and Applied Mathematics , 1959.
+Zhenqin Wu, Bharath Ramsundar, Evan N. Feinberg, Joseph Gomes, Caleb Geniesse, Aneesh S. Pappu,
+KarlLeswing,andVijayPande. Moleculenet: Abenchmarkformolecularmachinelearning,2017. URL
+https://arxiv.org/abs/1703.00564 .
+40Galactica: A Large Language Model for Science
+Yichong Xu, Jingjing Liu, Jianfeng Gao, Yelong Shen, and Xiaodong Liu. Towards human-level machine
+readingcomprehension: Reasoningandinferencewithmultiplestrategies. CoRR,abs/1711.04964,2017.
+URL http://arxiv.org/abs/1711.04964 .
+Michihiro Yasunaga, Jure Leskovec, and Percy Liang. Linkbert: Pretraining language models with document
+links, 2022. URL https://arxiv.org/abs/2203.15827 .
+Susan Zhang, Stephen Roller, Naman Goyal, Mikel Artetxe, Moya Chen, Shuohui Chen, Christopher Dewan,
+MonaDiab,XianLi,XiVictoriaLin,TodorMihaylov,MyleOtt,SamShleifer,KurtShuster,DanielSimig,
+PunitSinghKoura,AnjaliSridhar,TianluWang,andLukeZettlemoyer. Opt: Openpre-trainedtransformer
+language models, 2022. URL https://arxiv.org/abs/2205.01068 .
+Gengmo Zhou, Zhifeng Gao Gao, Qiankun Ding, Hang Zheng, Wei Xu, Hongteng, Linfeng Zhang, and
+Guolin Ke. Uni-mol: A universal 3d molecular representation learning framework, 2022. URL https:
+//chemrxiv.org/engage/chemrxiv/article-details/628e5b4d5d948517f5ce6d72 .
+41Galactica: A Large Language Model for Science
+A Appendix
+A.1 Dataset Components
+We cover the various components of the corpus in this section.
+A.1.1 Papers
+We source scientiﬁc papers from preprint servers such as arXiv, PMC and other sources; see Table 22.
+WealsousetheSemanticScholarfulltextdataset(S2)tocapturethelongtailofscience(Loetal.,2019a).
+Weapplyseveralqualityﬁlters,includingexcludingpapersfromjournalswithcertainkeywords,andalso
+excludingpaperswithalowjournalimpactfactor. DetailsoftheﬁltersweusedarecontainedintheAppendix.
+Wesourceabstractswherefulltextsarenotopenaccess. Intotalthefulldatasetcontains48millionpapers,
+abstract and full-text, up to July 2022.
+Data source Documents Tokens
+arXiv 2 million 35 billion
+PMC 3 million 23 billion
+Semantic Scholar 3 million 18 billion
+PubMed Abstracts 21 million 5 billion
+Semantic Scholar Abstracts 19 million 4 billion
+bioRxiv 128,059 1 billion
+OSF 54,905 428 million
+medRxiv 24,019 176 million
+ACL 25,518 150 million
+PubAg Abstracts 308,235 105 million
+ChemRxiv 7,617 67 million
+Total 48 million 88 billion
+Table 22: Paper sources used in our corpus
+We use a modiﬁed version of the GROBID library for converting PDFs to text, as well as obtaining titles,
+authors and citations (GROBID, 2008–2022). Where mathematical LaTeX is available, for example in arXiv,
+we make sure to combine the GROBID results with LaTeX source to recover mathematical content.
+Theﬁnalpaperdocumentsarestoredinamarkdownformat,asopposedtofullLaTeX.Weusemarkdownas
+thestandardformatforalldocumentsinthecorpustosupportknowledgeblendingbetweensources. Papers
+are citation processed, following the title-based approach of Section 2.2.
+A.1.2 Reference Material
+Wesourceencyclopedias, textbooksandeducationalmaterialto createabaseofreferencematerial thatthe
+model can learn from. The details are covered in Table 23.
+We apply source speciﬁc processing for several of the datasets, speciﬁcally:
+•ForStackExchange , we take questions from scientiﬁc sites; see the Appendix for the subset used.
+•ForPaperswithCode andIUPACGoldbook weapplydataaugmentationin the formofpromptran-
+domization. Sometimeswe posesectionsasquestions/answers;forexample asectionexplaininga
+machine learning method is sometimes posed as "Question: What is [method]?".
+•ForKhanAcademy articles , we add <work>tokens for step-by-step reasoning examples, which we
+explain shortly in Section 2.4.
+We make an eﬀort to preserve mathematical LaTeX and capture citations, including hyperlinks to papers.
+A.1.3 Knowledge Bases
+We source ﬁne-grained knowledge from scientiﬁc knowledge bases. The details are covered in Table 24.
+42Galactica: A Large Language Model for Science
+Data source Documents Tokens
+Wikipedia 6 million 5 billion
+StackExchange 1.6 million 1 billion
+LibreText 95,113 185 million
+Wikibooks 74,705 110 million
+Open Textbooks 647 94 million
+MIT OCW 25,640 90 million
+Wikiversity 38,138 52 million
+ProofWiki 32,389 12 million
+Khan Academy 3,075 7 million
+Papers with Code 13,430 4 million
+IUPAC Goldbook 6,788 1 million
+Total 8 million 7 billion
+Table 23: Reference material used in our corpus
+Data source Documents Tokens
+PubChem Compound 1.7 million 1 billion
+UniProt 551,837 0.6 billion
+RefSeq Genome 69 0.1 billion
+OEIS 350,833 0.07 billion
+Ribosome 9,950 0.05 billion
+LIPID MAPS 45,273 0.03 billion
+Reactome 156 0.01 billion
+NASA Exoplanet 5,021 0.01 billion
+Total 2 million 2 billion
+Table 24: Knowledge bases used in our corpus
+Forthechemistryandbiologydatasets,wewrapmodalitieslikeSMILESandproteinsequenceswiththeir
+specialized tokens (see Section 2.1). For UniProt we apply data augmentation to the document format:
+•OrderRandomization -withprobability 0:5theproteinsequencestartsatbeginningofthedocument,
+else the end of document. This ensures we can learn from seq !property and property !seq.
+•FormatRandomization -withprobability1
+3wereplaceadescription,e.g. "Thefunctionofprotein
+is...", with a Q&A, e.g. "Question: What is the function of the protein? Answer: The function is...".
+ForNASA Exoplanet we apply order randomization to the exoplanet characteristics.
+For chemical and biological sequences, we take a small subset of available entities. This is to ensure the
+model is not overly biased towards learning natural sequences over natural language. Speciﬁcally:
+•ForPubChemCompound ,wetakeasmall,randomsubset( 2million)oftotalcompounds( 110million).
+•ForUniProt, we take reviewed Swiss-Prot proteins; a small subset ( 0:5million) of total ( 227million).
+•ForRefSeq Genome , we take reference sequences, which is a small subset of available nucleotide
+sequences. For the human genome, we only include the protein-coding genes.
+This is a constraint we can relax in future work, enabling for much larger corpus. In this work, we focus on
+the ﬁrst step of investigating whether a single model can learn eﬀectively in this multi-modal setting.
+A.1.4 Common Crawl
+We source academic and scientiﬁc content via a highly-ﬁltered subset of CommonCrawl. The details are
+covered in Table 25.
+43Galactica: A Large Language Model for Science
+Data source Documents Tokens
+ScientiﬁcCC 0.8 million 0.7 billion
+AcademicCC 0.05 million 0.4 billion
+Total 0.9 million 1.1 billion
+Table 25: CommonCrawl material used in our corpus
+ForScientiﬁc Common Crawl , we train a fasttext classiﬁer to identify Common Crawl webpages with scientiﬁc
+content (Joulin et al., 2016) using a noisy set of 600 domains. We then manually annotated the domains
+predicted by fasttext as scientiﬁc to assemble a list of 200 high-quality scientiﬁc and reference domains.
+ForAcademicCommonCrawl ,weassemblealistofacademicdomains,suchasuniversitywebsites. Wetake
+PDFs from these domains, based on the Common Crawl index, and process these using GROBID.
+We do not LaTeX-process pages from these sources.
+We found the quality of extracted text in CommonCrawl generally quite poor, which is why we applied
+stringentﬁlters. Wesuspectthiscouldbeanimportantareaforfutureworkinordertocapturemorebase
+scientiﬁc knowledge.
+A.1.5 Code
+We source academic GitHub repositories from the Papers with Code index for machine learning, physics,
+mathematics, statistics and astronomy. The index does not explicitly cover sciences such as biology and
+chemistry,butmanyoftheserepositoriesarecapturedaspartofthegeneralmachinelearningindex. We
+exclude repositories that do not have a license or copyright ﬁle.
+A.1.6 <work> Datasets
+ForKhanProblems , we used the problems from AMPS and converted to a <work> format (Hendrycks et al.,
+2021). Wherepossiblewetriedtoincludemoretediousstepstoreduceerrorsfromasinglepass,butthis
+annotation was fairly incomplete and we suspect bigger gains are possible with more cleaning.
+ForGSM8kweusetheprovidedtrainingdatasetandconvertsothecalculatorstepsareperformedbywriting
+a Python program, following the <work> format (Cobbe et al., 2021). In general, we found when the model
+went into this prompt style, it was more error-prone. We think this is because the prompt style made the
+modelwritetoomanyprogramswithin<work>,ratherthangettingthingsreadytoruninasingleprogram.
+In general we found longer <work> answers led to a higher chance of a mistake on the reasoning path.
+ForOneSmallStep , we made 50 problem set question templates, and randomized the variables in the problem
+to get more prompt examples. We summarize the ﬁelds we made prompts below.
+Field Templates
+Astronomy 2
+Chemistry 7
+Electronics 10
+Mathematics 15
+Physics 14
+Statistics 2
+Total 50
+As we can see the diversity was not very large, and so further gains are likely with more annotation.
+Lastly we wrote 921 examples, based oﬀ internet examples, in a <work> format for Workout. This was
+our highest quality dataset, and had reasonable diversity across ﬁelds: mathematics, chemistry, biology,
+astronomy, physics, geology, history. This is the type of dataset we would look to scale in future work.
+44Galactica: A Large Language Model for Science
+A.2 Dataset Deduplication
+We use the following procedure for deduplicating the corpus:
+•Weidentifyidenticalspansof100bytesormore(ofutf-8text)acrossthewholecorpus,exceptfor
+some explicitly excluded data sources. We do this using the repository from Lee et al. (2022).
+•We process corpus ﬁles in a predetermined order to prioritize some sources. From a set of spans
+representing the exact same content across ﬁles, we remove the span in the ﬁrst ﬁle. If the same
+contentrepeatsacrossasingleﬁleanditwasnotfoundintheﬁlesbefore,allitsoccurrencesarekept.
+•We merge duplicated spans separated by at most 4 bytes.
+•We narrow down the resulting spans to paragraph boundaries (i.e. " \n\n").
+•We remove the content from ﬁles corresponding to the spans.
+A.3 Citation Identiﬁer Ablations
+We report ablations for the citation identiﬁer ablations below, where we test title-based identiﬁers versus
+alphanumeric identiﬁers.
+Speciﬁcally, we set up an evaluation set of dataset and method names from Papers with Code . The task is
+to predict the citation given the method or dataset name, e.g. ResNet [START_REF] , where the target is
+Deep Residual Learning for Image Recognition, He . We train a 6.7bn model on both types of process-
+ing for the ablation. Method and dataset results are shown below.
+Citation Processing
+(a) Titles (b) IDs
+Method citations Correct Hallucinated Incorrect Correct Hallucinated Incorrect
+k= 1 13.8% 54.5% 31.7% 1.8% 3.5% 94.7%
+2k<5 30.4% 38.6% 31.1% 9.3% 4.0% 86.7%
+5k<10 36.3% 29.5% 34.2% 17.9% 0.0% 82.1%
+10k<25 43.0% 15.8% 41.2% 38.8% 3.0% 58.2%
+25k<50 53.4% 8.7% 37.9% 43.7% 0.0% 56.3%
+50k<100 64.8% 9.9% 25.3% 60.6% 1.4% 38.0%
+100k<500 64.6% 8.3% 27.1% 63.5% 1.0% 35.4%
+500 78.6% 0.0% 21.4% 78.6% 0.0% 21.4%
+Table 26: Citation Processing Ablation . We predict citations for the PWC Methods dataset using 6.7 billion
+sizemodels. Papersarebucketedaccordingtothenumberofcitations(mentions)inthedataset. Thetitle
+processingmodelhasahigheraccuracy,butgreaterriskofhallucination. Thereare1,705methodsinthis
+evaluation dataset.
+Citation Processing
+(a) Titles (b) IDs
+Dataset citations Correct Hallucinated Incorrect Correct Hallucinated Incorrect
+k= 1 1.4% 62.5% 36.1% 0.5% 11.5% 88.1%
+2k<5 5.0% 59.2% 35.8% 0.6% 10.2% 89.2%
+5k<10 15.4% 49.7% 34.8% 2.6% 6.2% 91.1%
+10k<25 25.7% 36.8% 37.5% 8.3% 4.8% 86.9%
+25k<50 44.6% 27.4% 28.0% 22.9% 7.0% 70.0%
+50k<100 58.6% 17.7% 23.6% 41.4% 7.7% 50.9%
+100k<500 65.5% 6.7% 27.8% 62.4% 3.1% 34.5%
+500 81.8% 6.1% 12.1% 81.8% 3.0% 15.2%
+Table 27: Citation Processing Ablation . We predictcitations forthe PWCDatasets datasetusing 6.7billion
+capacity models. There are 4,735 datasets in this evaluation dataset.
+45Galactica: A Large Language Model for Science
+A.4 120B Validation Loss Per Source
+Figure23: ValidationLossPerSource . Validationlossfallsthroughtrainingforalldatasetcategories. Results
+are shown for the 120B model above.
+A.5 Chain-of-Thought vs <work>
+WeusedtherecentresultsbyChungetal.(2022)ofPaLM540BontheMMLUvalidationset (Hendrycks
+et al., 2020) for comparison. While use of reasoning degrades performance versus direct prompting for both
+approaches, the <work>token appears more robust.
+Chain-of-Thought versus <work>
+Subject Examples PaLM 540B CoTGAL 30B <work> GAL 120B <work>
+Abstract Algebra 11 9.1% 27.3% 27.3%
+Astronomy 16 7.1% 43.8% 25.0%
+College Chemistry 8 12.5% 37.5% 37.5%
+College Computer Science 11 9.1% 45.5% 54.6%
+College Mathematics 11 0.0% 36.4% 18.2%
+College Physics 11 36.4% 36.4% 45.5%
+Econometrics 11 33.3% 33.3% 33.3%
+Electrical Engineering 16 18.8% 37.5% 56.3%
+Elementary Mathematics 41 24.4% 53.7% 58.5%
+Formal Logic 9 0.0% 21.4% 21.4%
+High School Chemistry 22 22.7% 27.3% 36.4%
+High School Computer Science 9 33.3% 44.4% 44.4%
+High School Mathematics 29 24.1% 31.0% 51.7%
+High School Physics 17 11.8% 23.5% 29.4%
+High School Statistics 23 26.1% 39.1% 56.5%
+Machine Learning 11 18.2% 9.1% 27.3%
+Overall 261 19.1% 35.9% 42.4%
+Table 28: <work> vs Chain-of-Thought . PaLM is evaluated with CoT 5-shot. Galactica with the <work>
+token included in pre-training. Results here are on MMLU dev for comparability with PaLM.
+46Galactica: A Large Language Model for Science
+BIG-bench
+Benchmark OPT 30B OPT 175B BLOOM 176B GAL 30B GAL 120B
+Anachronisms 47.4% 49.1% 1.3% 47.0% 48.7%
+Analogical Similarity 12.7% 19.8% 19.2% 17.0% 23.5%
+Analytic Entailment 40.0% 52.9% 48.6% 47.1% 51.3%
+Causal Judgment 53.7% 55.3% 54.7% 49.5% 51.1%
+Crash Blossom 42.1% 36.8% 47.4% 42.1% 42.1%
+Crass AI 20.5% 34.1% 31.8% 40.9% 52.3%
+Dark Humor Detection 46.3% 48.8% 51.3% 48.8% 46.3%
+Date Understanding 15.5% 21.1% 12.2% 11.4% 16.8%
+Disambiguation QA 39.5% 44.6% 44.2% 46.9% 43.0%
+Empirical Judgments 38.4% 52.5% 56.6% 50.5% 54.6%
+English Proverbs 26.5% 20.6% 26.5% 26.5% 17.7%
+Entailed Polarity 87.8% 88.5% 89.2% 89.2% 85.8%
+Epistemic Reasoning 43.4% 43.5% 61.2% 40.1% 53.0%
+Evaluating Information Essentiality 32.4% 19.1% 29.4% 25.0% 22.1%
+Fantasy Reasoning 67.7% 69.2% 65.2% 66.7% 52.7%
+Figure of Speech Detection 10.2% 13.6% 22.0% 13.6% 15.3%
+General Knowledge 51.4% 78.6% 80.0% 68.6% 74.3%
+GRE Reading Comprehension 6.5% 12.9% 22.6% 16.1% 35.5%
+Hindu Knowledge 32.6% 42.3% 48.6% 36.6% 49.7%
+Human Organs Senses 45.2% 57.1% 59.5% 71.4% 73.8%
+Identify Odd Metaphor 27.7% 21.3% 19.2% 19.2% 27.7%
+Implicatures 44.3% 49.6% 53.7% 59.4% 69.9%
+Implicit Relations 22.4% 35.3% 28.2% 16.5% 25.9%
+Intent Recognition 66.2% 79.2% 89.5% 87.8% 89.5%
+Irony Identiﬁcation 50.5% 49.5% 63.6% 60.6% 59.6%
+Known Unknowns 50.0% 52.2% 50.0% 50.0% 41.3%
+Logic Grid Puzzle 32.7% 31.6% 31.1% 35.8% 39.4%
+Logical Args 18.8% 34.4% 25.0% 34.4% 43.8%
+Logical Fallacy Detection 50.9% 54.9% 54.5% 54.1% 55.1%
+Logical Sequence 38.5% 46.2% 30.8% 25.6% 43.6%
+Mathematical Induction 60.9% 55.1% 52.2% 44.9% 58.0%
+Metaphor Boolean 51.1% 57.5% 61.5% 63.4% 49.1%
+Misconceptions 56.1% 57.5% 54.8% 51.6% 58.0%
+Moral Permissibility 50.6% 54.4% 57.0% 52.3% 49.7%
+Movie Recommendation 6.4% 52.6% 49.4% 31.6% 36.8%
+Navigate 49.3% 49.8% 51.1% 50.9% 51.8%
+Nonsense Words Grammar 28.0% 46.0% 48.0% 38.0% 48.0%
+Novel Concepts 9.4% 12.5% 15.6% 6.3% 9.4%
+Odd One Out 30.2% 26.7% 22.1% 12.8% 19.8%
+Penguins in a Table 29.5% 32.9% 28.2% 40.9% 36.9%
+Phrase Relatedness 45.0% 51.0% 55.0% 53.0% 64.0%
+Physical Intuition 39.5% 42.0% 37.0% 55.6% 58.0%
+Physics 39.3% 42.8% 54.2% 55.9% 65.5%
+Presuppositions as NLI 36.6% 36.2% 39.6% 34.0% 28.0%
+Question Selection 39.8% 42.1% 5.2% 41.1% 42.7%
+Reasoning about Colored Objects 33.9% 38.7% 40.5% 45.8% 55.0%
+Riddle Sense 40.8% 57.1% 44.9% 46.9% 42.9%
+Ruin Names 19.4% 20.8% 12.5% 24.1% 33.0%
+Sentence Ambiguity 63.3% 60.0% 65.0% 60.0% 66.7%
+Similarities Abstraction 21.1% 22.4% 27.6% 21.1% 13.2%
+Snarks 42.0% 41.4% 47.0% 48.1% 48.6%
+Sports Understanding 50.0% 48.8% 54.5% 52.0% 51.8%
+StrategyQA 56.1% 58.5% 57.1% 53.9% 53.7%
+Temporal Sequences 31.4% 28.4% 20.5% 26.4% 21.2%
+Timedial 15.3% 22.2% 24.4% 39.9% 40.8%
+Understanding Fables 20.1% 19.6% 24.9% 28.0% 20.1%
+Winowhy 37.2% 39.7% 38.0% 56.5% 56.4%
+Average (weighted) 39.6% 43.4% 42.6% 46.6% 48.7%
+Average (unweighted) 32.8% 42.7% 42.2% 42.7% 45.3%
+Table 29: BIG-bench Results . Galactica exceeds the performance of general models, even at lower scales.
+47Galactica: A Large Language Model for Science
+A.6 Prompt Pre-training Datasets
+We report the prompt datasets we included in pre-training below.
+Data source Split Prompts Tokens
+MedMCQA (Pal et al., 2022) train180,894 13,311,290
+RACE (Xu et al., 2017) train 29,502 12,160,390
+Quoref (Dasigi et al., 2019) train 19,206 10,361,335
+ROPES (Lin et al., 2019) train 10,815 2,672,195
+BioASQ7 task b (Nentidis et al., 2021) train 2,676 1,288,462
+TQA (Kembhavi et al., 2017) train 8,566 1,856,473
+BoolQ (Clark et al., 2019) train 9,333 1,224,335
+SciQ (Welbl et al., 2017) train 10,346 1,397,668
+QASC (Khot et al., 2020) train 8,053 930,414
+CommonSenseQA (Talmor et al., 2018) train 9,644 660,750
+OpenBookQA (Mihaylov et al., 2018) train 4,908 324,995
+QCScience (V et al., 2021) train 2,417 209,803
+PubMedQA (Jin et al., 2019) train 495 186,304
+QASPER (Dasigi et al., 2021) train 606 105,985
+UChallenge (new) train 346 29,308
+TrueOrFalse (new) train 107 2,854
+Table 30: Question answering prompts used in Naturebook
+Data source Split Prompts Tokens
+JNLPBA (Kim et al., 2004) train 91,213 5,262,723
+BC4CHEMD (Krallinger et al., 2004) train 30,234 1,756,929
+ChemProt (Taboureau et al., 2011) train 3,030 1,286,816
+BC2GM (Smith et al., 2008) train 12,375 704,357
+S800 (Paﬁlis et al., 2013) train 5,318 281,448
+BC5CDR Chem (Li et al., 2016) train 4,503 241,729
+BC5CDR Disease (Li et al., 2016) train 4,498 231,322
+MethodNet (new) train 659 167,904
+Scientiﬁc Entities (new) train 305 97,935
+Table 31: Entity extraction prompts used in Naturebook
+Data source Split Prompts Tokens
+PWC Desc (new) train 3,586 9,663,419
+SciTail (Khot et al., 2018) train 23,361 1,383,614
+Fragmented Glass (new) train 718 867,985
+SciTLDR (Cachola et al., 2020) train 1,973 472,169
+Table 32: Summarization prompts used in Naturebook
+Data source Split Prompts Tokens
+Wizard of Wikipedia (Dinan et al., 2018) train 18,246 4,466,113
+Advising (Gunasekara et al., 2019) train 495 147,793
+Table 33: Dialog prompts used in Naturebook
+48Galactica: A Large Language Model for Science
+Data source Split Prompts Tokens
+BACE Classiﬁcation train 1,198 122,699
+BACE Regression train 1,198 154,656
+BBBP train 1,613 115,916
+ClinTox train 1,171 100,955
+Delaney train 893 62,083
+FreeSolv train 508 29,542
+HIV train 32,572 2,308,966
+HOPV train 2,217 333,620
+Lipo train 3,327 362,342
+PCBA train 714,277 553,645,656
+QM7 train 5,416 320,199
+QM8 train 275,569 27,163,516
+QM9 train1,259,090 128,427,073
+SAMPL train 508 1,259,090
+SIDER train 30,499 2,741,904
+Thermosol train 1,396 139,481
+Tox21 train 73,883 54,224,093
+Table 34: Chemical property prediction prompts used in Naturebook
+49Galactica: A Large Language Model for Science
+A.6.1 Chemical Property Prediction
+Wesetupapredictiontaskforchemicalandphysicalpropertieswithourvalidationsetof17,052compounds.
+We use the PubChem document structure to design a prompt. We show an example for XLogP in Figure 24.
+Canonical SMILES
+[START_SMILES]CC(=O)OC1=CC=CC=C1C(=O)O[END_SMILES]
+Computed Properties
+|Property Name |Property Value
+|XLogP3-AA Log P |
+Figure24: ChemicalPropertyPrompt . WedesignapromptbasedonthePubChemdocumentformat. Using
+this prompt style, we test the model’s ability to learn chemical and physical properties from the SMILES
+sequence.
+We report results in Table 35. The error decreases fairly smoothly with scale, suggesting self-supervised
+learningisoccurringwithin-documentfromSMILEStowardsthechemicalandphysicalproperties. Butit
+tails oﬀ for 120B which suggests more molecule data might be needed.
+Chemical and Physical Property Prediction
+Model Param (bn) Mol. Weight XLogP Rotatable Bond # Topological PSA
+GAL 125M 0.1 101.43 1.638 4.389 36.63
+GAL 1.3B 1.3 101.05 1.413 3.930 41.11
+GAL 6.7B 6.7 81.76 1.197 2.932 30.01
+GAL 30B 30 77.46 1.101 3.534 29.54
+GAL 120B 120 86.57 1.131 3.474 28.84
+Table 35: Chemical and physical property prediction . All results reported as RMSE. Prediction error
+generally decreases with scale, indicating Galactica can infer properties from SMILES.
+A.6.2 Docking Regression
+We looked brieﬂy at the docking score regression task (García-Ortegón et al., 2022). Here the task is to
+predict a docking score based on an target and a ligand. In the case of Galactica, we use a text format to
+represent this information. An example is shown in Figure 25. We report results in Table 36.
+[START_AMINO]MLEICLKLVGCKSKKGLSSSSSCYLEEALQRPVASDFEPQGLSEAARWNSKE...[END_AMINO]
+[START_I_SMILES]O1[C@@H]([C@@H](O)[C@@H](O)[C@@H]1N2C(=O)NC(=O)C=C2)...[END_I_SMILES]
+Question: What will be the docking score of this compound against the protein?
+Answer: -8.8
+Figure 25: DockSTRING Format . To construct the training set, we take the protein target and ligand
+sequences, pose a natural language question, and have the docking score as the answer.
+Forthreeofthetargets,Galacticaisabletoinferfromlookingatthesequencesalone,andperformancescales
+from 1.3B parameters onwards. However, Galactica does not solve the two harder targets ESR2 and PGR.
+This hints at a limitation with the text representation, and may point to more geometrical information being
+needed to solve the task with reasonable data-eﬃciency.
+50Galactica: A Large Language Model for Science
+Docking Regression
+Model Param (bn) ESR2 F2 KIT PARP1 PGR
+GAL 125M 0.1 -12.4 -6.09 -6.73 -1.69 -12.4
+GAL 1.3B 1.3 -0.293 0.591 0.063 0.728 -1.72
+GAL 6.7B 6.7 -0.216 0.694 0.290 0.681 -0.894
+GAL 30B 30 -0.186 0.679 0.313 0.732 -0.468
+GAL 120B 120 -0.564 0.626 0.249 0.732 -0.960
+Table 36: DockSTRING Results . Metric shown is R2.
+A.6.3 Rest of MMLU
+We report social sciences and results for other ﬁelds below:
+Subject OPT BLOOM Gopher Chinchilla GAL 30B GAL 120B
+Anatomy 28.9% 37.0% 56.3% 70.4% 54.1% 58.5%
+Business Ethics 31.0% 36.0% 70.0% 72.0% 42.0% 48.0%
+Clinical Knowledge 21.9% 29.8% 67.2% 75.1% 57.7% 59.2%
+Computer Security 32.0% 34.0% 65.0% 76.0% 65.0% 67.0%
+Conceptual Physics 34.9% 36.6% 49.4% 67.2% 43.4% 50.6%
+Global Facts 23.0% 32.0% 38.0% 39.0% 32.0% 35.0%
+High School European History 6.7% 4.8% 72.1% 78.8% 60.6% 67.3%
+High School Geography 26.3% 38.9% 76.8% 86.4% 58.1% 63.6%
+High School Gov. & Politics 32.6% 30.6% 83.9% 91.2% 58.5% 61.7%
+High School Macroeconomics 36.2% 23.1% 65.1% 70.5% 40.5% 46.4%
+High School Microeconomics 32.8% 27.3% 66.4% 77.7% 49.2% 55.9%
+High School Psychology 25.5% 36.9% 81.8% 86.6% 68.8% 74.3%
+High School US History 9.3% 11.8% 78.9% 83.3% 51.5% 58.3%
+High School World History 30.0% 29.1% 75.1% 85.2% 63.7% 71.7%
+Human Aging 35.0% 34.5% 66.4% 77.6% 55.2% 59.2%
+Human Sexuality 26.0% 33.6% 67.2% 86.3% 56.5% 58.8%
+International Law 33.1% 41.3% 77.7% 90.9% 64.4% 71.1%
+Jurisprudence 0.0% 0.0% 71.3% 79.6% 47.2% 53.7%
+Logical Fallacies 28.2% 28.2% 72.4% 80.4% 47.2% 59.5%
+Management 25.2% 27.2% 77.7% 82.5% 60.2% 63.1%
+Marketing 32.5% 41.0% 83.3% 89.7% 70.5% 76.5%
+Miscellaneous 31.5% 37.7% 75.7% 84.5% 54.0% 63.9%
+Moral Disputes 28.2% 32.7% 66.8% 77.5% 50.3% 56.6%
+Moral Scenarios 25.4% 24.4% 40.2% 36.5% 24.1% 24.2%
+Nutrition 30.4% 32.4% 69.9% 77.1% 63.1% 67.3%
+Philosophy 29.9% 31.5% 68.8% 79.4% 52.4% 54.7%
+Prehistory 36.7% 36.1% 67.6% 81.2% 52.2% 59.6%
+Professional Accounting 29.8% 28.7% 44.3% 52.1% 31.2% 40.0%
+Professional Law 30.3% 25.5% 44.5% 56.5% 34.6% 36.0%
+Professional Medicine 27.9% 25.4% 64.0% 75.4% 52.2% 59.6%
+Professional Psychology 32.7% 33.3% 68.1% 75.7% 50.5% 56.5%
+Public Relations 34.5% 30.0% 71.8% 73.6% 44.5% 53.6%
+Security Studies 35.1% 29.8% 64.9% 75.9% 46.5% 57.1%
+Sociology 26.4% 29.9% 84.1% 91.0% 65.7% 72.6%
+US Foreign Policy 44.0% 37.0% 81.0% 92.0% 64.0% 75.0%
+Virology 30.7% 28.3% 47.0% 53.6% 44.6% 48.2%
+World Religion 43.9% 41.5% 84.2% 87.7% 44.4% 64.9%
+Table 37: Rest of MMLU . The corpus delta eﬀects are more evidence with non-STEM subjects in particular,
+where Galactica lags the performance of Chinchilla and Gopher.
+51Galactica: A Large Language Model for Science
+A.7 Further Training Dataset Details
+A.7.1 FragmentedGlass
+Wecompilealistofscientiﬁcentities,retrievefragmentsforeachone,andwriteadescriptionoftheentity
+based on the retrieved fragments. This can be considered a summarization task. We also write ground-truth
+descriptions without any retrieved fragments.
+A.7.2 MethodNet
+We compile machine learning abstracts and predict the new method that was introduced in the paper.
+A.7.3 PWC Desc
+Foralistofdatasetandmethodsinmachinelearning,weretrievefragmentsforeachonefromtheintroducing
+paper, and write a summary description based on the retrieved fragments.
+A.7.4 Ribosome
+We use Expasy6to create a paired translation set between nucleotide sequences from the protein coding part
+of the human genome and protein sequences.
+A.7.5 S2
+Papers from certain ﬁelds are ignored due to quality concerns: psychology, business, art, economics, ge-
+ography, history, political science, philosophy and sociology. Papers from journals with words like "law",
+"history", "politics", "business", "religion" were also ignored. For S2, we also exclude papers from low impact
+journals. TheapproximateimpactfactorofeachjournalintheS2datasetwascomputed,bycountingthe
+number of papers in that journal and the number of citations that these papers received. If the approximate
+impact factor <1, the papers from that journal are ignored. Non-English papers are ignored. Some of these
+constraints can likely be relaxed in future work.
+A.7.6 ScientiﬁcEntities
+Forarandomsampleofacademicpaperabstracts,wepredictthescientiﬁcentitiesthatwerementionedin
+the abstract.
+A.7.7 StackExchange
+Weincludequestionandanswersfromthefollowingsources: academic,ai,arduino,astronomy,aviation,
+bioinformatics,biology,chemistry,chess,cogsci,computergraphics,cs,cseducators,cstheory,datascience,
+dsp, earthscience, economics, electronics, engineering, hardwarerecs, health, hsm, math, matheducators,
+mathematica,mathoverﬂow,/mechanics,networkengineering,or,physics,puzzling,quant,quantumcom-
+puting,retrocomputing,reverseengineering,robotics,scicomp,softwareengineering,softwarerecs,sound,
+space, stats.
+A.7.8 TrueOrFalse
+We include 107 True or False questions to improve zero-shot performance for this type of question.
+A.7.9 UChallenge
+We include 346 free-form question and answers of university-level questions about science; this is a form of
+closed-book QA (and not multiple-choice).
+6https://web.expasy.org/translate/
+52Galactica: A Large Language Model for Science
+A.8 Evaluation Dataset Examples
+A.8.1 AminoProbe
+Prompt
+Question: Does peptide bond cleavage occur on the carbonyl side or the amino side for trypsin?
+Answer: carbonyl
+A.8.2 Galaxy Clusters
+Prompt
+Abell 370 is a galaxy cluster located in the constellation of
+Correct Completion : Cetus
+A.8.3 Mineral Groups
+Prompt
+Fayalite is a silicate mineral from the major group
+Correct Completion : Nesosilicates
+A.8.4 Deduplication Results
+One of our concerns from reading the literature was the lack of data leakage analysis for results on MMLU,
+given the massive corpuses being used. Following from previous work of Brown et al. (2020), we search for
+n-grammatchesbetweenthetrainingandtestset. Wechosetoremoveany13-grammatchesfromthetestset
+that appear in the training set and we report the scores before and after removal of these clashing examples.
+Results are shown overleaf.
+53Galactica: A Large Language Model for Science
+score_before score_after count_before count_after
+abstract_algebra 33.0% 32.32% 100 99
+anatomy 58.52% 58.95% 135 134
+astronomy 65.13% 64.67% 152 150
+business_ethics 48.0% 48.0% 100 100
+clinical_knowledge 59.24% 59.24% 265 265
+college_biology 68.75% 69.23% 144 143
+college_chemistry 46.0% 46.46% 100 99
+college_computer_science 49.0% 48.98% 100 98
+college_mathematics 43.0% 45.26% 100 95
+college_medicine 57.23% 57.74% 173 168
+college_physics 42.16% 42.27% 102 97
+computer_security 67.0% 67.35% 100 98
+conceptual_physics 50.64% 50.85% 235 234
+econometrics 42.11% 42.11% 114 114
+electrical_engineering 62.76% 62.76% 145 145
+elementary_mathematics 38.10% 38.10% 378 378
+formal_logic 32.54% 32.54% 126 126
+global_facts 35.0% 35.05% 100 97
+high_school_biology 69.35% 69.61% 310 306
+high_school_chemistry 47.78% 47.78% 203 203
+high_school_computer_science 70.0% 70.0% 100 100
+high_school_european_history 67.27% 66.17% 165 133
+high_school_geography 63.63% 63.63% 198 198
+high_school_government_and_politics 61.66% 61.46% 193 192
+high_school_macroeconomics 46.41% 46.53% 390 389
+high_school_mathematics 32.59% 32.58% 270 267
+high_school_microeconomics 55.88% 55.88% 238 238
+high_school_physics 33.77% 33.77% 151 151
+high_school_psychology 74.31% 74.26% 545 544
+high_school_statistics 41.20% 41.20% 216 216
+high_school_us_history 58.33% 58.59% 204 99
+high_school_world_history 71.73% 72.04% 237 186
+human_aging 59.19% 59.19% 223 223
+human_sexuality 58.78% 58.78% 131 131
+international_law 71.07% 71.07% 121 121
+jurisprudence 53.70% 53.70% 108 108
+logical_fallacies 59.51% 59.26% 163 162
+machine_learning 38.39% 36.54% 112 104
+management 63.11% 63.11% 103 103
+marketing 76.50% 76.50% 234 234
+medical_genetics 68.0% 67.68% 100 99
+miscellaneous 63.86% 63.81% 783 782
+moral_disputes 56.65% 56.52% 346 345
+moral_scenarios 24.24% 24.24% 895 895
+nutrition 67.32% 67.32% 306 306
+philosophy 54.66% 54.52% 311 310
+prehistory 59.57% 59.57% 324 324
+professional_accounting 40.07% 39.86% 282 281
+professional_law 36.05% 36.05% 1534 1534
+professional_medicine 59.56% 59.63% 272 270
+professional_psychology 56.54% 56.54% 612 612
+public_relations 53.63% 53.63% 110 110
+security_studies 57.14% 57.14% 245 245
+sociology 72.64% 73.0% 201 200
+us_foreign_policy 75.0% 75.76% 100 99
+virology 48.19% 48.48% 166 165
+world_religions 64.91% 64.91% 171 171
+54Galactica: A Large Language Model for Science
+A.8.5 Example Wikipedia Article Written by Galactica
+Multi-Head Attention
+Multi-Head Attention is an attention mechanism used in the Transformer architecture for neural networks
+(Vaswani et al., 2017).
+Background
+Innaturallanguageprocessing,anattentionmechanismisamodelthatmapsaqueryandasetofkey-valuepairs
+toanoutput,wherethequery,keys,values,andoutputareallvectors. Theoutputiscomputedasaweighted
+sum of the values, where the weight assigned to each value is computed by a compatibility function of the query
+with the corresponding key (Vaswani et al., 2017).
+Thescaleddot-productattentionisanattentionmechanismusedintheTransformerarchitecture. Itisdeﬁned
+as mapping a query and a set of key-value pairs to an output, where the query, keys, values, and output
+are all vectors. The output is computed as a weighted sum of the values, where the weight assigned to
+eachvalueiscomputedbyacompatibilityfunctionofthequerywiththecorrespondingkey(Vaswanietal.,2017).
+Themulti-headattentionisanextensionofthescaleddot-productattention. Themulti-headattentionmechanism
+is deﬁned as several scaled dot-product attention stacked together, where the input is linearly projected h times
+with diﬀerent, learned linear projections to dk,dk, anddvdimensions, respectively (Vaswani et al., 2017).
+Formal deﬁnition
+Letthequerymatrixbe Q,thekeymatrixbe K,andthevaluematrixbe V. Thematricesareofshape dkdq,
+dkdk, anddvdkrespectively. The multi-head attention mechanism is deﬁned as:
+MultiHead (Q;K;V ) =Concat (head 1;:::;head h)WO
+where:
+head i=Attention
+QWQ
+i;KWK
+i;VWV
+i
+whereWQ
+i,WK
+i,andWV
+iarethe learnedlinearprojectionsto the dk,dk,anddvdimensions,respectively. WO
+is the linear projection from dvhtodvdimensions (Vaswani et al., 2017).
+Applications
+Multi-headattentioniswidelyusedinnaturallanguageprocessingandotherdomains. Forexample,intheBERT
+model,multi-headattentionisusedtolearnthecontext-awarerepresentationoftheinputsequence(Devlinet
+al., 2019).
+References
+1. Vaswani, Ashish, Noam Shazeer, Niki Parmar, Jakob Uszkoreit, Llion Jones, Aidan N.Gomez, Lukasz Kaiser,
+and Illia Polosukhin. “Attention Is All You Need.” ArXiv abs/1706.03762 (2017).
+2. Devlin,Jacob,Ming-WeiChang,KentonLee,andKristinaToutanova. “BERT:Pre-TrainingofDeepBidirectional
+Transformers for Language Understanding.” ArXiv abs/1810.04805 (2019).
+55Galactica: A Large Language Model for Science
+A.8.6 Example Literature Survey Written by Galactica
+Self-Supervised Learning, A Survey
+Abstract: In this paper we review self-supervised learning, a method of learning features from unlabelled data.
+We discuss the historical motivation behind self-supervised learning and review some of the current state of the
+art methods. We also look at how self-supervised learning has been used to solve a wide range of problems,
+including image classiﬁcation, object detection, video analysis and robotics. Finally we discuss some of the
+challenges and future research directions for self-supervised learning.
+1 Introduction
+Deep learning has been very successful at solving many problems in machine learning, however these methods
+are reliant on large amounts of labelled data. In many real world applications, it is very expensive or impossible
+toobtainlargeamountsoflabelleddata. Self-supervisedlearninghasemergedasawayofovercomingthisissue.
+Self-supervisedlearningistheprocessoflearningataskthatcanbeautomaticallygeneratedfromunlabelled
+data. Inthisway,thedataisautomaticallylabelledbyexploitingsomeformofstructureinthedata. Oncethe
+self-supervised task has been solved, the features learned by the network are used to solve the original task.
+Inthispaper wewill discussthehistoricalmotivationbehindself-supervisedlearning andreviewsome ofthe
+current state of the art methods. We will look at how self-supervised learning has been used to solve a wide
+rangeof problems,includingimage classiﬁcation,objectdetection, videoanalysisand robotics. Finallywe will
+discuss some of the challenges and future research directions for self-supervised learning.
+2 Historical Motivation
+The ﬁrst wave of deep learning was dominated by supervised learning methods. These methods require
+large amounts of labelled data, which is very expensive to obtain in many domains. To overcome this issue,
+unsupervised learning methods were introduced. These methods don’t require labelled data, and so can be
+applied to a wide range of domains. The downside of these methods is that the learned features are not as good
+as those learned by supervised learning methods.
+To bridge the gap between supervised and unsupervised learning, self-supervised learning was introduced. The
+idea is to learn a supervised task from unlabelled data. Once this task has been learned, the features learned can
+betransferredtoothertasks. The hopeisfeatureslearnedbyself-supervisedlearningwillbebetter thanthose
+learned by unsupervised learning, and that self-supervised learning can be applied to a wide range of domains.
+The ﬁrst method of self-supervised learning was autoencoders (Hinton et al., 1993). Autoencoders are a type of
+neuralnetworkthatlearntoreconstructtheinput. Thiscanbethoughtofaslearningaself-supervisedtaskof
+predicting the input from the input. The features learned by autoencoders have been shown to be useful for
+solving other tasks (Hinton et al., 2006).
+Another method of self-supervised learning is multi-task learning (Caruana, 2017). In multi-task learning,
+multipletasksarelearnedsimultaneously. Theideaisthatbylearningmultipletasks,thenetworkwilllearn
+better features. In this way, multi-task learning can be thought of as a form of self-supervised learning.
+3 Learning Methods
+(cont)
+3.1 Pretext Tasks
+Theﬁrstmethodof self-supervisedlearningthatwe willdiscuss istheuse ofpretext tasks. In thismethod, a
+supervised task is learned from unlabelled data. This task is called a pretext task, and the labels for this task
+areautomaticallygeneratedfromthedata. Oncethepretexttaskhasbeenlearned,thefeatureslearnedbythe
+network are used to solve the original task. (cont)
+56Galactica: A Large Language Model for Science
+A.8.7 Example Lecture Notes Written by Galactica
+Lecture 1: Hartree-Fock Theory
+Introduction
+In this lecture, we will consider the simplest quantum mechanical method for approximating the ground
+state energy of a many-electron system. The Hartree-Fock method is also known as the self-consistent
+ﬁeld method, and is an approximation to the exact many-electron wavefunction known as the Slater
+determinant. The Slater determinant is an anti-symmetric product of one-electron functions (orbitals),
+and is the simplest wavefunction that satisﬁes the Pauli exclusion principle. The Hartree-Fock method is
+aniterativemethodforﬁndingthebestpossiblesetoforbitalsthatminimizestheenergyoftheSlaterdeterminant.
+In the Hartree-Fock method, the electron-electron repulsion energy is approximated as a classical Coulomb
+interaction between two charge distributions, one for each electron. This approximation neglects the correlation
+betweentheelectrons,whichisanimportantpartofthetotalelectron-electronrepulsionenergy. Theresulting
+method is a mean-ﬁeld theory in which each electron moves in an average ﬁeld due to the other electrons. The
+resulting equations are known as the Hartree-Fock equations, and can be solved self-consistently to obtain
+the best possible orbitals. The resulting ground state energy is known as the Hartree-Fock energy, and the
+Hartree-Fock wavefunction is a single Slater determinant built from these orbitals.
+TheHartree-FockmethodisalsoknownastheSelf-ConsistentField(SCF)method,becausetheequationsforthe
+orbitals are solved self-consistently. The Hartree-Fock equations can be derived variationally by minimizing the
+energyoftheSlaterdeterminantwithrespecttotheorbitals. Theresultingorbitalsareknownasthecanonical
+Hartree-Fock orbitals, and are not necessarily localized in space. The Hartree-Fock energy is invariant to unitary
+transformations of the canonical orbitals, and therefore there are an inﬁnite number of orbitals that yield the
+same Hartree-Fock energy. These orbitals are known as non-canonical orbitals, and can be localized in space by
+appropriate unitary transformations.
+Single-Electron Approximation
+In this section, we will review the basics of quantum mechanics for a single particle. This is useful for
+understanding the single-electron approximation used in Hartree-Fock theory.
+The time-independent Schrödinger equation for a particle in a potential V(r)is given by:
+H (r) =E (r)
+where the Hamiltonian is
+H= ~
+2mr2+V(r)
+The time-independent Schrödinger equation is an eigenvalue equation for the Hamiltonian operator, where
+the eigenvalues are the allowed energies of the system. The Hamiltonian is a sum of two operators, one
+corresponding to the kinetic energy of the particle, and the other corresponding to the potential energy. The
+potential energy operator acts on the wavefunction by multiplying by the potential V(r). The kinetic energy
+operatoristheLaplacianoperator r2,whichisthedivergenceofthegradientofthewavefunction. TheLaplacian
+operator is a second derivative with respect to the position of the particle.
+(cont)
+57Galactica: A Large Language Model for Science
+A.8.8 I’m sorry Frank, I think you missed it
+IfAIisgoingtohelpusexploretheuniverse,weneedittohavebasicchessabilitiestoalleviateboredom-
+given the impossibility of faster-than-light travel.
+The BIG-bench task suite ofSrivastava et al. (2022) has abenchmark for checkmate-in-one detection. For fun,
+we made a dataset of 20,000 public chess games and converted them to ASCII chess using the python-chess
+library7. Weincluded19,426gamesinourpre-trainingcorpus(restforvalidation). Wealsorecordedthe
+ELO ratings of players. An example document looks like below:
+# A Chess Game
+## Player Information
+White ELO: 2286
+Black ELO: 2586
+## The Game Begins
+r n b q k b n r
+p p p p p p p p
+. . . . . . . .
+. . . . . . . .
+. . . . . . . .
+. . . . . . . .
+P P P P P P P P
+R N B Q K B N R
+White (ELO: 2286) plays e4
+r n b q k b n r
+p p p p p p p p
+. . . . . . . .
+. . . . . . . .
+. . . . P . . .
+. . . . . . . .
+P P P P . P P P
+R N B Q K B N R
+(cont)
+For evaluation, weconvertedthe checkmate-in-oneboards to ASCIIand promptedfor amove. Resultsare
+shown below.
+Model Accuracy
+GAL 125M 0.54%
+GAL 1.3B 0.43%
+GAL 6.7B 1.77%
+GAL 30B 1.29%
+GAL 120B 3.03%
+Table 38: Checkmate-in-one Results . Metric shown is Accuracy.
+While this represents the state-of-the-art over other large language models8, it is clear that more work is
+needed on this problem.
+7https://python-chess.readthedocs.io/en/latest/
+8https://github.com/google/BIG-bench/tree/main/bigbench/benchmark_tasks/checkmate_in_one
+58

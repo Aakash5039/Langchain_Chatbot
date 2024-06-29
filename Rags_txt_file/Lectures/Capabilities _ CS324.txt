@@ -1,0 +1,397 @@
+CS324
+Lectures /Capabilities
+In this lecture, we will explore the capabilities of GPT-3, the canonical large language model. W e
+will closely follow the benchmarks from the GPT-3 paper , which include:
+standard NLP benchmarks (e.g., question answering), as well as
+quirky one-off demos (e.g., using a new word in a sentence).
+In comparison with the state-of-the-art-result for each task, the results are mixed:
+On some tasks such as language modeling, GPT-3 exceeds the state-of-the-art by a huge
+margin.
+On others, where GPT-3 is competing against systems that are trained with large amounts of
+labeled data, it lags far behind .
+The way to think about these results is as follows:
+GPT-3 was not trained on these tasks  explicitly; it was just trained as a language model to
+predict the next word.
+Nonetheless, even without “tr ying” , GPT-3 does a passable job on average at a broad range
+of NLP tasks.
+Because GPT-3 was not trained on any of these tasks, it hasn’t overfit, which means it has a
+good chance o f doing w ell at many many other tasks  (as seen by the passable
+performance on one-off tasks).
+Moreover, if you wanted to do well on any particular task (e.g., question answering), you
+should in principle be able to adapt GPT-3 using the lar ge amounts o f labeled data  to
+exceed state-of-the-art.
+Adaptation . Recall that a language model   is a distribution over sequences of tokens  and
+thus can be used to score sequences:
+It can also be used to perform conditional generation of a completion given a prompt:
+A task is a mapping from inputs to outputs. For example, for question answering, we might have:•
+•
+•
+•
+•
+•
+•
+•
+p x1:L
+p(the,mouse,ate,the,cheese).
+the mouse ate the cheese. ⇝Input: What school did burne hogarth establish?
+Output: School of Visual Arts
+We use the term adaptation  to refer to the process of taking a language model and turning it
+into a task model, given:
+a natural language descr iption  of the task, and
+a set of training instances  (input-output pairs).
+There are two primary ways to perform adaptation:
+Which adaptation procedure should we go with?
+Training can be challenging due t o overfitting  (just imagine fine-tuning a 175 billion
+parameter model based on 5 examples). How to do this effectively will be the topic of the
+adaptation lecture.
+For now, we will be content with adaptation o f GPT-3 using pr ompting . Note that the
+limitation of prompting is that we can only leverage a only small number of training instances
+(as many as can fit into a prompt). This is due to a limitation of T ransformers, where the
+prompt and the completion must fit into 2048 tokens.
+The GPT-3 paper evaluated GPT-3 on a large set of tasks. W e will consider a subset of these, and
+for each task, discuss the following:•
+•
+Training  (standard supervised learning): train a new model that maps inputs to outputs,
+either by1
+creating a new model that uses the language model as features (probing), ora
+starting with the language model and updating it based on the training instances (fine-
+tuning), orb
+something in between (lightweight fine-tuning).c
+Prompting  (in-context learning): Construct a prompt (a string based on the description and
+training instances) or a set of prompts, feed those into a language model to obtain
+completions.2
+Zero-shot learning: number of training examples is 0a
+One-shot learning: number of training examples is 1b
+Few-shot learning: number of training examples is fewc
+•
+•
+Definition : What is the task and its motivation? 1
+Adaptation : How do we reduce the task to language modeling (via prompting)? 2
+Results : What are the quantitative numbers compared to task-specific state-of-the-art
+models?3Size and number o f examples matt ers. By default, the results will based on
+the full GPT-3 model (davinci), which has 175 billion parameters
+using in-context learning with as many training instances as you can stuff into the prompt.
+Along the way, we will do ablations to see if model size and number of in-context training
+instances matters. Spoiler: it does and more is better.
+The tasks are grouped as follows:
+The goals of this lecture is to provide:
+The most natural starting point for thinking about what a language model can do is to ask if it
+can do the thing that language models are supposed to do: model language.
+Recall that a language model  is a probability distribution over sequences of tokens. Suppose
+we take a corpus of text , for example:
+We can ask: what is the probability the language model assigns to it?
+Recall that we can break down the the joint probability into the product of the conditional
+probabilities for each token by the chain rule:•
+•
+Language modeling1
+Question answering2
+Translation 3
+Arithmetic4
+News article generation5
+Novel tasks6
+an overview of tasks in NLP (independent of large language models),1
+a sense of how well GPT-3 works, and2
+a taste for the art of prompt engineering.3
+Language modeling
+p
+x1:L
+the mouse ate the cheese
+p(the mouse ate the cheese)
+p( )= p( ∣ ). x1:L ∏
+i=1L
+xi x1:i−1Perplexity . The joint probability of a sequence depends on its length and thus goes t o zer o as
+the length grows, which makes it hard to track. (Just think about trying to get a better estimate of
+perplexity on newswire by getting more newswire.)
+Intuitively we want to average the per token probabilities . We don’t want to take
+the arithmetic average because assigning a token probability 0 is really bad (think about coding:
+your code length would be infinite), but the arithmetic average doesn’t penalize you for that.
+Instead, we want the geometr ic av erage , which is exactly what perplexity does:
+Perplexity can be interpreted as the average “branching fact or” per token. R ecall that
+ is the code length. W e are taking the average code length; exponentiating
+provides the number of possibilities. For intuition, take uniform distribution: a bitstring of length
+of 3 can encode  possible strings.
+Tale o f two err ors. There are two types of errors a language model can make, and perplexity
+treats them asymmetrically:
+Recall err or: The language model fails to place probability mass on some token. P erplexity
+has no mercy:
+Precision err or: The language model places extra probability mass on some bad sequences.
+Perplexity provides a slap on the wrist. Given a language model , suppose we mix in some
+garbage distribution  with probability :
+Then we can compute the perplexity of  under :
+where the last approximate equality holds for small values of . If we mix in 5% junk, then
+perplexity only by 5%. Note that the resulting language is horrible for generation, since every 20
+tokens on average it’s just going to generate a gibberish token.
+Now let’s get on with evaluating perplexity on an actual dataset.
+The Penn T ree Bank  is a classic dataset in NLP, originally annotated for syntactic parsing.
+Beginning with Emami and Jelinek (2004)  and Mikolov and Zweig (2012) , a version of the datasetp( ∣ ) xi x1:i−1
+( )= exp( log ). perplexitypx1:L1
+L∑
+i=1L1
+p( ∣ ) xi x1:i−1
+log1
+p( ∣ ) xix1:i−1
+23
+•
+p(ate∣the,mouse)→ 0 ⇒ (the,mouse,ate,the,cheese)→ ∞. perplexityp
+•
+p
+r ϵ
+q( ∣ )= (1− ϵ)p( ∣ )+ ϵr( ∣ ). xi x1:i−1 xi x1:i−1 xi x1:i−1
+x1:L q
+( )≤ ( )≊ (1+ ϵ) ( ), perplexityqx1:L1
+1− ϵperplexitypx1:L perplexitypx1:L
+ϵ
+Penn T ree Bankthat only contained W all Street Journal articles was used as a language modeling evaluation.
+Note that the PTB language modeling benchmark involved some significant preprocessing of the
+original dataset (h/t to John Hewitt  for pointing this out).
+Adaptation . Feed the entire text as a prompt into GPT-3 and evaluate the perplexity ( demo ):
+Pierre Vink en, 61 y ears old, will join the bo ard as a nonex ecutiv e director No v. 29. Mr .
+Vinken is chair man o f Elsevier N.V ., the Dut ch publishing gr oup.
+Results . GPT-3 vastly outperforms the existing state-of-the-art:
+Model Perplexity
+GPT-3 20.5
+BERT-Large-CAs1 31.3
+See the leaderboard  for the latest results.
+Train/t est leakage . The authors did not evaluate on some datasets such as WikiT ext-103  because
+GPT-3 was trained on Wikipedia. PTB had the advance of predating the Internet, and is only
+available through a paid license. This is another complication with large datasets: it is difficult to
+check that your test data did not appear in your training data and was memorized.
+Task: predict the last word of a sentence.
+Motivation: Solving the task requires modeling long-range dependencies .
+Adaptation .
+LAMBAD A is natively already a language modeling task, so we could just ask a language
+model to complete the final word of the sentence.
+Problem: language model doesn’t know it should be producing the final word of the
+sentence.
+Solution: frame it more explicitly as a input-output mapping and use in-context learning with
+additional examples ( demo ):
+Fill in blank :
+Alice was fr iends with Bob. Alic e went to visit her fr iend ___. -> Bob
+She held the t orch in fr ont o f her.
+She caught her br eath.LAMBAD A (Paperno et al. 2016 )
+•
+•
+•
+•
+•“Chris? Ther e’s a st ep.”
+“What ?”
+“A step. Cut in the r ock. About f ifty feet ahead. ” She mo ved fast er. They both mo ved
+faster. “In fact, ” she s aid, r aising the t orch higher , “ther e’s mor e than a ___. -> step
+Results . GPT-3 does much bett er on this task than the previous state-of-the-art (based on GPT-
+2):
+Model Perplexity
+GPT-3 (few-shot) 1.92
+SOTA 8.63
+See the leaderboard  for the latest results.
+Motivation: evaluate a model’s ability to perform commonsense reasoning
+Task: choose the most appropriate completion for a sentence from a list of choices
+Adaptation . This is a multiple-choice task , so the most natural thing to do is to score each
+candidate answer with the language model and predict the “best” one ( demo ):
+Making a cak e: Sev eral cak e pops ar e sho wn on a display . A w oman and girl ar e sho wn
+making the cak e pops in a kit chen. They ${ans wer}
+where ${answer} is one of:
+How do you score a candidate answer  given a question ? There’s no principled answer, but
+here are some heur istics :HellaS wag ( Zeller s et al. 2019 )
+•
+•
+bake them, then fr ost and dec orate. 1
+taste them as they plac e them on plat es. 2
+put the fr osting on the cak e as they p an it. 3
+come out and begin dec orating the cak e as w ell. 4
+y x
+Unnormalized probability: . The problem with the unnormalized
+probability is that it has a bias towards short answers ( demo ).1 score(x,y)= p(x,y)
+Length-normalized probability: . This fixes the length bias.
+However, given two answers of the same length, the model still might prefer the more
+popular entity.2 score(x,y)=p(x,y)
+num-tokens(y)Results . GPT-3 got close but did not exceed the state-of-the-art:
+Model Accuracy
+SOTA 85.6
+GPT-3 79.3
+However, the SO TA used fine-tuning on the HellaS wag training set, so it is pretty impressive that
+GPT-3 can get close without any task-specific training data!
+See the leaderboard  for the latest results.
+Now we consider (closed-book) question answering, where the input is a question and the
+output is an answer. The language model has t o somehow “know” the answ er without
+looking up information in a database or a set of documents (we’ll consider reading
+comprehension later, where the information is provided).
+Input: What school did burne hogarth establish?
+Output: School of Visual Arts
+Task: given a trivia question, generate the answer
+The original dataset was collected from trivial enthusiasts and was presented as a challenge
+used for (open book) reading comprehension, but we use it for (closed-book) question
+answering.
+Adaptation . We define a prompt based on the training instances (if any) and the question, and
+take the completion as the predicted answer ( demo ):
+Q: ‘Nude Des cending A S taircase’ is per haps the most famous p ainting b y which
+20th c entur y artist?
+A: Marcel Duchamp
+Results .Frequency-normalized probability: , where  is a neutral string like
+. This lowers the score for answers that happen to just be common (e.g., \nl{John}).
+Compare demo  versus demo .3 score(x,y)=p(y∣x)
+p(y∣ ) x0x0
+Answer:
+Question answ ering
+TriviaQ A (Joshi et al. 2017 )
+•
+•Model Accuracy
+RAG 68.0
+GPT-3 (zero-shot) 64.3
+GPT-3 (few-shot) 71.2
+We also see that both increasing the model size and the number of in-context training instances
+helps:
+Task: answer questions
+Dataset collected from Google search queries, initially created for question answering on
+knowledge bases
+Adaptation .
+We define a prompt the same as above ( demo ):
+Q: What s chool did bur ne hogar th est ablish?
+A: School o f Visual Ar ts
+Results .WebQuestions ( Berant et al. 2013 )
+•
+•Model Accuracy
+RAG 45.5
+GPT-3 (zero-shot) 14.4
+GPT-3 (few-shot) 41.5
+Task: answer questions
+Dataset collected from Google search queries (with long-form answers)
+Adaptation . We define a prompt the same as above ( demo ):
+Q: Who play ed tess on t ouched b y an angel?
+A: Dellor eese Patricia Early (July 6, 1931 - No vember 19, 2017), kno wn pr ofessionally as
+Della R eese.
+Results .
+Model Accuracy
+RAG 44.5
+GPT-3 (zero-shot) 14.6
+GPT-3 (few-shot) 29.9
+Task: translate a sentence in a source language (e.g., German) to sentence in a target
+language (e.g., English)
+Machine translation has been a long standing NLP task since the 1960s, and statistical
+machine translation took off within NLP (with its own distinct subcommunity) in the 2000s,
+followed by neural machine translation in the mid-2010s. It has always been a data-rich field
+due to the existence of human translators.
+The standard evaluation dataset is the WMT’14  and WMT’16  datasets.
+Since there are multiple possible translations, the (automatic) evaluation metric is BLEU (which
+captures a notion of n-gram overlap).
+Adaptation . For the few-shot setting, we construct a prompt containing input-output training
+instances along with the input ( demo ):NaturalQuestions
+•
+•
+Translation
+•
+•
+•
+•Mein Haus liegt auf dem Hügel. = My hous e is on the hill.
+Keinesfalls dür fen dies e für den k ommer ziellen Gebr auch v erwendet w erden. = In no
+case may they be us ed for c ommer cial purpos es.
+Results . Here are the results from German to English:
+Model Accuracy
+SOTA (supervised) 40.2
+GPT-3 (zero-shot) 27.2
+GPT-3 (few-shot) 40.6
+Even without supervised training data, GPT-3 matches the state-of-the-art of a fully-
+supervised system!
+This presents a lower bound on how well one can do in machine translation; you would
+definitely want to leverage the large amount of parallel corpora (aligned input-output pairs).
+Results from French and R omanian are similar.
+Results from English to a foreign language is much worse, which is expected since GPT-3 is
+primarily an English language model.
+GPT-3 is a language model (primarily on English), but we can evaluate it on a range of more
+“abstract reasoning” tasks, to evaluate GPT-3 as more of a general-purpose model.
+Task: do arithmetic (2-5 digit addition, subtraction, multiplication)
+There’s no practical reason you would want to solve this task; it’s just a diagnostic task to
+satisfy our scientific curiosity.
+Adaptation . Pose the problem as question answering ( demo ):
+Q: What is 556 plus 497?
+A: 1053
+Results .•
+•
+•
+•
+Arithmetic
+•
+•It doesn’t work perfectly and can hardly be said to “understand arithmetic” fully, but it works
+surprisingly well.
+Task: given title and subtitle, generate a news article
+Dataset: title/subtitles taken from newser.com
+Evaluation: humans rated articles based on how likely the article was likely to be written by a
+machine
+Adaptation . Note: in-context learning was needed to give the model an idea of what a prompt
+looks like.
+Title: Unit ed Methodists Agr ee to Hist oric Split
+Subtitle: Thos e who oppos e gay marr iage will for m their o wn denomination
+Article: After tw o days o f intense deb ate, the Unit ed Methodist Chur ch has agr eed t o a
+historic split - one that is expect ed to end in the cr eation o f a new denomination, one
+that will be "theologically and s ocially c onservative," ac cording t o The W ashingt on Post.
+The major ity of delegat es att ending the chur ch's annual Gener al Confer ence in May
+voted to strengthen a b an on the or dination o f LGBTQ cler gy and t o write new r ules that
+will "dis cipline" cler gy who o fficiate at s ame-s ex weddings. But thos e who oppos ed thes e
+measur es hav e a new plan: They s ay they will for m a s eparate denomination b y 2020,
+calling their chur ch the Chr istian Methodist denomination...News ar ticle generation
+•
+•
+•Results . Humans were able to able to detect classify “human” versus “machine” only 52% of the
+time (barely above random chance).
+For the article above, humans guessed “machine” correctly only 12% of the time.
+Task: given a new made-up word and a definition, generate a sentence that uses the word.
+Adaptation . Just describe the task in the prompt ( demo ):
+To “screeg” s omething is t o swing a s word at it. An ex ample o f a sentence that us es the
+word screeg is: W e screeged the tr ee with our s words.
+Task: given an ungrammatical sentence, generate its grammatical version.
+Adaptation . The prompt consists of input-output pairs ( demo ):
+Poor English input: I eat ed the purple berr ies.
+Good English output: I at e the purple berr ies.
+Poor English input: Thank y ou for picking me as y our designer . I’d appr eciate it.
+Good English output: Thank y ou for choosing me as y our designer . I appr eciate it.
+Poor English input: The mentioned changes hav e done. or I did the alt eration that y ou
+request ed. or I changed things y ou want ed and did the modi fications.
+Good English output: The r equest ed changes hav e been made. or I made the alt eration
+that y ou
+request ed. or I changed things y ou want ed and made the modi fications.
+Poor English input: I’ d be mor e than happ y to work with y ou in another pr oject.
+Good English output: I would be happ y to work with y ou on another pr oject.
+Since the original paper, GPT-3 has been applied to many more tasks, including benchmark
+datasets and one-off demos. Here is an non-exhaustive list.
+Benchmarks .
+SWORDS : lexical substitution, where the goal is to predict synonyms in the context of a
+sentence.Novel tasks
+Using new w ords
+•
+Correcting English grammar
+•
+Other tasks
+•Massive Multitask Language Understanding : 57 multiple-choice problems spanning
+mathematics, US history, computer science, law, etc.
+TruthfulQ A: question answering dataset that humans would answer falsely due to
+misconceptions.
+The performance on these benchmarks is still mediocre, but it’s perhaps not bad given that we’re
+doing few-shot learning!
+Demos .
+Examples from the OpenAI website
+Examples from gpt3demo.com
+The demos are creative and interesting, but it’s hard to tell how reliably they work.
+GPT-3 was evaluated on a wide range of standard NLP benchmarks and on quirky one-off
+tasks.
+GPT-3 can perform extremely well or be very medicore.
+Both increasing the size of the model and the number of examples helps performance.
+There are a few heuristic ways of adapting the language model to the task of interest.
+Why does this work? No one knows.
+Language Models are Few-Shot Learners . Tom B. Br own, Benjamin Mann, Nick Ry der, Melanie
+Subbiah, J . Kaplan, Pr afulla Dhar iwal, Ar vind Neelak antan, Pr anav Sh yam, Gir ish Sastr y,
+Amanda Ask ell, Sandhini Agar wal, Ar iel Herber t-Voss, Gr etchen Kr ueger , T. Henighan, R. Child,
+A. Ramesh, Daniel M. Ziegler , Jeff Wu, Clemens Wint er, Christopher Hess e, Mark Chen, Er ic
+Sigler , Mat eusz Litwin, Sc ott Gr ay, Benjamin Chess, J ack Clark , Christopher Ber ner, Sam
+McCandlish, Alec Radfor d, Ilya Sutsk ever, Dar io Amodei . NeurIPS 2020.
+Blog post explaining perplexity•
+•
+•
+•
+Summar y
+•
+•
+•
+•
+•
+Further r eading
+•
+•
