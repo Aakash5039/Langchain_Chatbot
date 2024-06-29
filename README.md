@@ -12,7 +12,7 @@ The code loads text documents from a specified directory using `DirectoryLoader`
 The model uses the Cohere chat model and Hugging Face embeddings to convert queries into vectors. A retriever searches for similar vectors in the vector store, and contextual compression filters out less relevant features. The filtered chunks, along with the user query and chat history, are then passed to the Cohere chat model. Using this information, the model generates a response.
 
 
-Future Improvemets:
+### Future Improvemets:
 1) Implementing Routing for effective and accurate data retreival
 2) Deploying the model on streamlit
 3) Try to implement automatic chat saving and retreival.
